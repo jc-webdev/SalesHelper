@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import logoOqla from '../logo-oqla.png';
 import { isSupabaseConfigured, supabase } from './supabaseClient';
 
@@ -9,6 +9,7 @@ const LEGACY_PENDING_STATUS = 'Rozmowa się nie odbyła';
 const STATUS_SENT_OFFER = 'Rozmowa się odbyła - wysłano ofertę';
 const STATUS_MEETING = 'Rozmowa się odbyła - zaplanowane spotkanie';
 const STATUS_LOST = 'Rozmowa się odbyła - lost';
+const API_BASE_URL = import.meta.env.DEV ? 'http://127.0.0.1:8787' : '';
 const STATUS_OPTIONS = [
     DEFAULT_STATUS,
     LEGACY_PENDING_STATUS,
@@ -450,7 +451,7 @@ function buildStartupData(stored) {
         return {
             view: parsed.view || 'list',
             clubs: Array.isArray(parsed.clubs) ? normalizeLoadedClubs(parsed.clubs) : parseCsv(sampleCsv),
-            selectedClubId: parsed.selectedClubId || null,
+            selectedClubId: null,
             activeClubId: parsed.activeClubId || null,
             currentNode: parsed.currentNode || 'start',
             history: Array.isArray(parsed.history) ? parsed.history : [],
@@ -584,6 +585,25 @@ function getStatusTone(status) {
     return 'amber';
 }
 
+function getCompactCallStatusLabel(status) {
+    if (status === DEFAULT_STATUS) {
+        return 'Brak połączenia';
+    }
+    if (status === LEGACY_PENDING_STATUS) {
+        return 'Nie odbyła się';
+    }
+    if (status === STATUS_SENT_OFFER) {
+        return 'Wysłano ofertę';
+    }
+    if (status === STATUS_MEETING) {
+        return 'Spotkanie';
+    }
+    if (status === STATUS_LOST) {
+        return 'Lost';
+    }
+    return status;
+}
+
 function getConnectionTone(csvStatus) {
     if (!csvStatus) return 'blue';
     if (csvStatus.includes('Sprzedane')) return 'green';
@@ -594,105 +614,181 @@ function getConnectionTone(csvStatus) {
 
 export default function App() {
     const [state, setState] = useState(initialState);
+    const [session, setSession] = useState(null);
+    const [userProfile, setUserProfile] = useState(null);
+    const [teamMembers, setTeamMembers] = useState([]);
     const [csvImportError, setCsvImportError] = useState('');
     const [importReview, setImportReview] = useState(null);
-    const [isHydrated, setIsHydrated] = useState(false);
+    const [authLoading, setAuthLoading] = useState(true);
+    const [clubsLoading, setClubsLoading] = useState(false);
     const [cloudMessage, setCloudMessage] = useState(isSupabaseConfigured ? 'Łączenie z Supabase...' : 'Tryb lokalny (bez Supabase)');
+    const [authError, setAuthError] = useState('');
+    const [authForm, setAuthForm] = useState({ email: '', password: '' });
+    const [adminForm, setAdminForm] = useState({ fullName: '', email: '' });
+    const [adminMessage, setAdminMessage] = useState('');
+    const [adminResetLink, setAdminResetLink] = useState(null);
+    const [activePanel, setActivePanel] = useState('board');
+    const [isDetailEditing, setIsDetailEditing] = useState(false);
+    const [detailDraft, setDetailDraft] = useState(null);
+    const [workflowInfoOpen, setWorkflowInfoOpen] = useState(false);
+    const [sharedMemos, setSharedMemos] = useState([]);
+    const [isMemoComposerOpen, setIsMemoComposerOpen] = useState(false);
+    const [memoDraft, setMemoDraft] = useState('');
+    const [authMode, setAuthMode] = useState('login');
+    const [resetPasswordForm, setResetPasswordForm] = useState({ password: '', confirmPassword: '' });
+    const [resetPasswordMessage, setResetPasswordMessage] = useState('');
+    const [resetPasswordError, setResetPasswordError] = useState('');
+    const detailStatusSelectRef = useRef(null);
+
+    useEffect(() => {
+        if (!isSupabaseConfigured || !supabase) {
+            setAuthLoading(false);
+            setCloudMessage('Supabase nie jest skonfigurowany');
+            return;
+        }
+
+        let isMounted = true;
+
+        supabase.auth.getSession().then(({ data }) => {
+            if (!isMounted) {
+                return;
+            }
+
+            setSession(data.session || null);
+            setAuthLoading(false);
+        });
+
+        const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+            setSession(nextSession);
+            setAuthLoading(false);
+            if (event === 'PASSWORD_RECOVERY') {
+                setAuthMode('reset');
+                setResetPasswordError('');
+                setResetPasswordMessage('');
+            }
+            if (event === 'SIGNED_OUT') {
+                setAuthMode('login');
+                setResetPasswordForm({ password: '', confirmPassword: '' });
+                setResetPasswordError('');
+                setResetPasswordMessage('');
+            }
+        });
+
+        return () => {
+            isMounted = false;
+            authListener.subscription.unsubscribe();
+        };
+    }, []);
 
     useEffect(() => {
         let isMounted = true;
 
-        async function hydrate() {
-            const stored = window.localStorage.getItem(STORAGE_KEY);
-            const startupData = buildStartupData(stored);
-
-            if (!isSupabaseConfigured || !supabase) {
-                if (!isMounted) {
-                    return;
-                }
-
+        async function hydrateAuthenticatedWorkspace() {
+            if (!session?.user) {
+                setUserProfile(null);
+                setTeamMembers([]);
+                setClubsLoading(false);
+                setAdminResetLink(null);
                 setState((currentState) => ({
                     ...currentState,
-                    ...startupData,
+                    view: 'list',
+                    clubs: [],
+                    selectedClubId: null,
+                    activeClubId: null,
+                    currentNode: 'start',
+                    history: [],
                 }));
-                setCloudMessage('Tryb lokalny (bez Supabase)');
-                setIsHydrated(true);
+                setSharedMemos([]);
+                setIsMemoComposerOpen(false);
+                setMemoDraft('');
                 return;
             }
 
-            const { data, error } = await supabase
-                .from(SUPABASE_TABLE)
-                .select('*')
-                .order('updated_at', { ascending: false });
+            setClubsLoading(true);
+            setCloudMessage('Ładowanie danych z Supabase...');
+            setAuthError('');
+            setAdminMessage('');
+
+            const [{ data: profile, error: profileError }, { data: clubs, error: clubsError }] = await Promise.all([
+                supabase.from('profiles').select('*').eq('id', session.user.id).single(),
+                supabase.from(SUPABASE_TABLE).select('*').order('updated_at', { ascending: false }),
+            ]);
 
             if (!isMounted) {
                 return;
             }
 
-            if (error) {
-                setState((currentState) => ({
-                    ...currentState,
-                    ...startupData,
-                }));
-                setCloudMessage('Błąd Supabase, używam danych lokalnych');
-                setIsHydrated(true);
-                return;
-            }
+            const resolvedProfile = profileError
+                ? {
+                    id: session.user.id,
+                    email: session.user.email,
+                    full_name: session.user.user_metadata?.full_name || session.user.email,
+                    is_admin: false,
+                }
+                : profile;
 
-            if (data?.length) {
-                const clubsFromDb = normalizeLoadedClubs(data.map(mapSupabaseRowToClub));
-                setState((currentState) => ({
-                    ...currentState,
-                    ...startupData,
-                    clubs: clubsFromDb,
-                    selectedClubId: clubsFromDb[0]?.id || null,
-                }));
-                setCloudMessage('Połączono z Supabase');
-                setIsHydrated(true);
+            setUserProfile(resolvedProfile);
+
+            if (clubsError) {
+                setCloudMessage('Błąd ładowania danych z Supabase');
+                setClubsLoading(false);
                 return;
             }
 
             setState((currentState) => ({
                 ...currentState,
-                ...startupData,
+                view: 'list',
+                clubs: normalizeLoadedClubs((clubs || []).map(mapSupabaseRowToClub)),
+                selectedClubId: null,
+                activeClubId: null,
+                currentNode: 'start',
+                history: [],
             }));
-            setCloudMessage('Supabase połączony (tabela jeszcze pusta)');
-            setIsHydrated(true);
+            setCloudMessage('Połączono z Supabase');
+            setClubsLoading(false);
+
+            if (resolvedProfile?.is_admin) {
+                await refreshTeamMembers(session.access_token, true);
+            } else {
+                setTeamMembers([]);
+            }
+
+            await refreshSharedMemos(session.access_token);
         }
 
-        hydrate();
+        hydrateAuthenticatedWorkspace();
 
         return () => {
             isMounted = false;
         };
-    }, []);
+    }, [session]);
 
     useEffect(() => {
-        if (!isHydrated || !state.clubs.length) {
+        if (!session?.access_token) {
             return;
         }
 
-        window.localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify({
-                view: state.view,
-                clubs: state.clubs,
-                selectedClubId: state.selectedClubId,
-                activeClubId: state.activeClubId,
-                currentNode: state.currentNode,
-                history: state.history,
-            }),
-        );
-    }, [isHydrated, state]);
+        let isMounted = true;
+        const retryTimer = window.setTimeout(() => {
+            if (isMounted) {
+                refreshSharedMemos(session.access_token);
+            }
+        }, 250);
+
+        refreshSharedMemos(session.access_token);
+
+        return () => {
+            isMounted = false;
+            window.clearTimeout(retryTimer);
+        };
+    }, [session?.access_token]);
 
     useEffect(() => {
-        if (!isHydrated || !isSupabaseConfigured || !supabase) {
+        if (!session?.user || !isSupabaseConfigured || !supabase || clubsLoading) {
             return;
         }
 
         const timer = window.setTimeout(async () => {
-            setCloudMessage('Synchronizacja z Supabase...');
-
             const { error } = await supabase
                 .from(SUPABASE_TABLE)
                 .upsert(state.clubs.map(mapClubToSupabaseRow), { onConflict: 'id' });
@@ -708,7 +804,7 @@ export default function App() {
         return () => {
             window.clearTimeout(timer);
         };
-    }, [isHydrated, state.clubs]);
+    }, [clubsLoading, session?.user, state.clubs]);
 
     const currentClub = useMemo(() => {
         return state.clubs.find((club) => club.id === state.activeClubId)
@@ -722,6 +818,21 @@ export default function App() {
         }
         return state.clubs.find((club) => club.id === state.selectedClubId) || null;
     }, [state.clubs, state.selectedClubId, state.view]);
+
+    useEffect(() => {
+        if (!selectedClubForListModal || !detailStatusSelectRef.current) {
+            return;
+        }
+
+        const timer = window.setTimeout(() => {
+            detailStatusSelectRef.current?.focus({ preventScroll: false });
+            detailStatusSelectRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }, 60);
+
+        return () => {
+            window.clearTimeout(timer);
+        };
+    }, [selectedClubForListModal?.id]);
 
     const summary = useMemo(() => {
         const total = state.clubs.length;
@@ -761,6 +872,8 @@ export default function App() {
             ...currentState,
             selectedClubId: clubId,
         }));
+        setIsDetailEditing(false);
+        setDetailDraft(null);
     }
 
     function closeClubDetails() {
@@ -768,6 +881,8 @@ export default function App() {
             ...currentState,
             selectedClubId: null,
         }));
+        setIsDetailEditing(false);
+        setDetailDraft(null);
     }
 
     function loadSample() {
@@ -779,7 +894,7 @@ export default function App() {
             setState((currentState) => ({
                 ...currentState,
                 clubs: applyImportPlan(currentState.clubs, importPlan),
-                selectedClubId: importPlan.newClubs[0]?.id || currentState.selectedClubId,
+                selectedClubId: null,
             }));
             return;
         }
@@ -807,7 +922,7 @@ export default function App() {
                     setState((currentState) => ({
                         ...currentState,
                         clubs: applyImportPlan(currentState.clubs, importPlan),
-                        selectedClubId: importPlan.newClubs[0]?.id || currentState.selectedClubId,
+                        selectedClubId: null,
                     }));
                     return;
                 }
@@ -884,6 +999,488 @@ export default function App() {
         persistPatch(clubId, { [fieldKey]: fieldValue });
     }
 
+    function updateClubCallStatus(clubId, callStatus) {
+        persistPatch(clubId, { callStatus });
+    }
+
+    async function handleLogin(event) {
+        event.preventDefault();
+
+        if (!supabase) {
+            setAuthError('Supabase nie jest skonfigurowany.');
+            return;
+        }
+
+        setAuthError('');
+
+        const { error } = await supabase.auth.signInWithPassword({
+            email: authForm.email.trim(),
+            password: authForm.password,
+        });
+
+        if (error) {
+            setAuthError('Nie udało się zalogować. Sprawdź e-mail i hasło.');
+        }
+    }
+
+    async function handleLogout() {
+        if (!supabase) {
+            return;
+        }
+
+        await supabase.auth.signOut();
+        setActivePanel('board');
+        setAdminMessage('');
+        setAdminResetLink(null);
+        setTeamMembers([]);
+        setSharedMemos([]);
+        setIsMemoComposerOpen(false);
+        setMemoDraft('');
+        setAuthMode('login');
+        setResetPasswordForm({ password: '', confirmPassword: '' });
+        setResetPasswordError('');
+        setResetPasswordMessage('');
+    }
+
+    async function refreshTeamMembers(accessToken = session?.access_token, isAdmin = userProfile?.is_admin) {
+        if (!isAdmin || !accessToken) {
+            return;
+        }
+
+        const response = await fetch(buildApiUrl('/api/team-members'), {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+            },
+        });
+
+        if (!response.ok) {
+            return;
+        }
+
+        const payload = await response.json();
+        setTeamMembers(Array.isArray(payload.members) ? payload.members : []);
+    }
+
+    async function refreshSharedMemos(accessToken = session?.access_token) {
+        if (!accessToken || !supabase) {
+            return;
+        }
+
+        const { data, error } = await supabase
+            .from('shared_memos')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (!error) {
+            setSharedMemos(Array.isArray(data) ? data : []);
+        }
+    }
+
+    async function handleCreateSharedMemo(event) {
+        event.preventDefault();
+
+        if (!session?.user || !supabase) {
+            return;
+        }
+
+        const note = memoDraft.trim();
+        if (!note) {
+            return;
+        }
+
+        const { error } = await supabase.from('shared_memos').insert({
+            author_id: session.user.id,
+            author_email: session.user.email,
+            author_name: userProfile?.full_name || session.user.user_metadata?.full_name || session.user.email,
+            note,
+        });
+
+        if (!error) {
+            setMemoDraft('');
+            setIsMemoComposerOpen(false);
+            await refreshSharedMemos();
+        }
+    }
+
+    async function handleDeleteSharedMemo(memoId) {
+        if (!session?.user || !supabase) {
+            return;
+        }
+
+        const { error } = await supabase.from('shared_memos').delete().eq('id', memoId);
+
+        if (!error) {
+            await refreshSharedMemos();
+        }
+    }
+
+    async function handleCreateTeamMember(event) {
+        event.preventDefault();
+
+        if (!session?.access_token) {
+            setAdminMessage('Brak aktywnej sesji. Zaloguj się ponownie.');
+            return;
+        }
+
+        setAdminMessage('');
+
+        const response = await fetch(buildApiUrl('/api/create-team-member'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({
+                fullName: adminForm.fullName.trim(),
+                email: adminForm.email.trim(),
+            }),
+        });
+
+        const responseText = await response.text();
+        const payload = responseText ? (() => {
+            try {
+                return JSON.parse(responseText);
+            } catch (error) {
+                return { error: responseText };
+            }
+        })() : {};
+
+        if (!response.ok) {
+            setAdminMessage(payload.error || 'Nie udało się utworzyć konta.');
+            return;
+        }
+
+        setAdminMessage(`Utworzono konto dla ${payload.email}. Tymczasowe hasło: ${payload.password}`);
+        setAdminForm({ fullName: '', email: '' });
+        setAdminResetLink(null);
+        await refreshTeamMembers();
+    }
+
+    async function handleSendPasswordReset(memberEmail) {
+        if (!session?.access_token) {
+            setAdminMessage('Brak aktywnej sesji. Zaloguj się ponownie.');
+            return;
+        }
+
+        setAdminMessage('');
+        setAdminResetLink(null);
+
+        const response = await fetch(buildApiUrl('/api/send-password-reset'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({
+                email: memberEmail,
+                redirectTo: window.location.origin,
+            }),
+        });
+
+        const responseText = await response.text();
+        const payload = responseText ? (() => {
+            try {
+                return JSON.parse(responseText);
+            } catch (error) {
+                return { error: responseText };
+            }
+        })() : {};
+
+        if (!response.ok) {
+            setAdminMessage(payload.error || 'Nie udało się wygenerować linku resetu hasła.');
+            return;
+        }
+
+        setAdminMessage(
+            payload.emailSent
+                ? `Wysłano link resetu do ${payload.email}.`
+                : `Wygenerowano link resetu dla ${payload.email}, ale email nie został wysłany automatycznie.`
+        );
+        setAdminResetLink(payload.actionLink || null);
+    }
+
+    async function handleResetPasswordSubmit(event) {
+        event.preventDefault();
+
+        if (!supabase) {
+            setResetPasswordError('Supabase nie jest skonfigurowany.');
+            return;
+        }
+
+        setResetPasswordError('');
+        setResetPasswordMessage('');
+
+        if (!resetPasswordForm.password || resetPasswordForm.password.length < 8) {
+            setResetPasswordError('Hasło musi mieć co najmniej 8 znaków.');
+            return;
+        }
+
+        if (resetPasswordForm.password !== resetPasswordForm.confirmPassword) {
+            setResetPasswordError('Hasła muszą być takie same.');
+            return;
+        }
+
+        const { error } = await supabase.auth.updateUser({
+            password: resetPasswordForm.password,
+        });
+
+        if (error) {
+            setResetPasswordError('Nie udało się ustawić nowego hasła.');
+            return;
+        }
+
+        setResetPasswordMessage('Hasło zostało zaktualizowane. Możesz się teraz zalogować.');
+        setResetPasswordForm({ password: '', confirmPassword: '' });
+        await supabase.auth.signOut();
+        setAuthMode('login');
+    }
+
+    function renderAuthScreen() {
+        if (authMode === 'reset') {
+            return (
+                <div className="app auth-shell">
+                    <div className="card auth-card">
+                        <header className="auth-header">
+                            <img className="logo-image" src={logoOqla} alt="Oqla" />
+                            <div className="badge">Sales Assistant</div>
+                        </header>
+
+                        <div className="step">Reset hasła</div>
+                        <h1>Ustaw nowe hasło</h1>
+                        <p className="subtle">Wpisz nowe hasło do konta. Po zapisaniu możesz zalogować się ponownie.</p>
+
+                        <form className="auth-form" onSubmit={handleResetPasswordSubmit}>
+                            <label className="field-group">
+                                <span>Nowe hasło</span>
+                                <input
+                                    type="password"
+                                    value={resetPasswordForm.password}
+                                    onChange={(event) => setResetPasswordForm((current) => ({ ...current, password: event.target.value }))}
+                                    placeholder="Min. 8 znaków"
+                                    autoComplete="new-password"
+                                    required
+                                />
+                            </label>
+
+                            <label className="field-group">
+                                <span>Powtórz hasło</span>
+                                <input
+                                    type="password"
+                                    value={resetPasswordForm.confirmPassword}
+                                    onChange={(event) => setResetPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+                                    placeholder="Powtórz nowe hasło"
+                                    autoComplete="new-password"
+                                    required
+                                />
+                            </label>
+
+                            {resetPasswordError ? <p className="error-message">{resetPasswordError}</p> : null}
+                            {resetPasswordMessage ? <p className="success-message">{resetPasswordMessage}</p> : null}
+
+                            <button type="submit" className="primary-action auth-submit">
+                                Zapisz nowe hasło
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <div className="app auth-shell">
+                <div className="card auth-card">
+                    <header className="auth-header">
+                        <img className="logo-image" src={logoOqla} alt="Oqla" />
+                        <div className="badge">Sales Assistant</div>
+                    </header>
+
+                    <div className="step">Logowanie wymagane</div>
+                    <h1>Dostęp do danych tylko po zalogowaniu</h1>
+                    <p className="subtle">
+                        Wrażliwe dane klubów są chronione przez Supabase Auth. Admin może tworzyć konta dla członków zespołu w osobnym panelu po zalogowaniu.
+                    </p>
+
+                    <form className="auth-form" onSubmit={handleLogin}>
+                        <label className="field-group">
+                            <span>E-mail</span>
+                            <input
+                                type="email"
+                                value={authForm.email}
+                                onChange={(event) => setAuthForm((current) => ({ ...current, email: event.target.value }))}
+                                placeholder="name@firma.pl"
+                                autoComplete="email"
+                                required
+                            />
+                        </label>
+
+                        <label className="field-group">
+                            <span>Hasło</span>
+                            <input
+                                type="password"
+                                value={authForm.password}
+                                onChange={(event) => setAuthForm((current) => ({ ...current, password: event.target.value }))}
+                                placeholder="Twoje hasło"
+                                autoComplete="current-password"
+                                required
+                            />
+                        </label>
+
+                        {authError ? <p className="error-message">{authError}</p> : null}
+
+                        <button type="submit" className="primary-action auth-submit">
+                            Zaloguj się
+                        </button>
+                    </form>
+                </div>
+            </div>
+        );
+    }
+
+    function renderAdminPanel() {
+        if (!userProfile?.is_admin) {
+            return (
+                <div className="card admin-card">
+                    <div className="step">Panel admina</div>
+                    <h1>Brak uprawnień administratora</h1>
+                    <p className="subtle">Ten widok jest dostępny tylko dla kont oznaczonych jako admin w tabeli profiles.</p>
+                </div>
+            );
+        }
+
+        return (
+            <section className="admin-layout">
+                <div className="card admin-card">
+                    <div className="admin-topbar">
+                        <div>
+                            <div className="step">Panel admina</div>
+                            <h1>Zarządzanie dostępem zespołu</h1>
+                            <p className="subtle">Twórz konta dla członków zespołu i kontroluj, kto ma dostęp do danych.</p>
+                        </div>
+                        <button type="button" className="secondary" onClick={() => setActivePanel('board')}>
+                            Wróć do aplikacji
+                        </button>
+                    </div>
+
+                    <div className="detail-box">
+                        <h3>Dodaj członka zespołu</h3>
+                        <form className="admin-form" onSubmit={handleCreateTeamMember}>
+                            <label className="field-group">
+                                <span>Imię i nazwisko</span>
+                                <input
+                                    type="text"
+                                    value={adminForm.fullName}
+                                    onChange={(event) => setAdminForm((current) => ({ ...current, fullName: event.target.value }))}
+                                    placeholder="Jan Kowalski"
+                                    required
+                                />
+                            </label>
+
+                            <label className="field-group">
+                                <span>E-mail</span>
+                                <input
+                                    type="email"
+                                    value={adminForm.email}
+                                    onChange={(event) => setAdminForm((current) => ({ ...current, email: event.target.value }))}
+                                    placeholder="jan@firma.pl"
+                                    required
+                                />
+                            </label>
+
+                            <button type="submit" className="primary-action">
+                                Utwórz konto
+                            </button>
+                        </form>
+                        {adminMessage ? <p className="subtle admin-message">{adminMessage}</p> : null}
+                        {adminResetLink ? (
+                            <p className="subtle admin-message">
+                                Link resetu: <a href={adminResetLink} target="_blank" rel="noreferrer">otwórz</a>
+                            </p>
+                        ) : null}
+                    </div>
+
+                    <div className="detail-box">
+                        <h3>Członkowie zespołu</h3>
+                        <div className="team-list">
+                            {teamMembers.length ? teamMembers.map((member) => (
+                                <div key={member.id} className="team-member-row">
+                                    <div>
+                                        <div className="team-member-name">{member.full_name || member.email}</div>
+                                        <div className="team-member-email">{member.email}</div>
+                                    </div>
+                                    <div className="team-member-actions">
+                                        <span className={`status-pill ${member.is_admin ? 'green' : 'blue'}`}>
+                                            {member.is_admin ? 'Admin' : 'Członek zespołu'}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            className="secondary team-reset-button"
+                                            onClick={() => handleSendPasswordReset(member.email)}
+                                        >
+                                            Wyślij link/reset hasła
+                                        </button>
+                                    </div>
+                                </div>
+                            )) : <p className="subtle">Brak użytkowników do wyświetlenia.</p>}
+                        </div>
+                    </div>
+                </div>
+            </section>
+        );
+    }
+
+    function startDetailEditing() {
+        if (!selectedClubForListModal) {
+            return;
+        }
+
+        setDetailDraft({
+            callStatus: selectedClubForListModal.callStatus || DEFAULT_STATUS,
+            callNote: selectedClubForListModal.callNote || '',
+            ...editableFieldConfigs.reduce((accumulator, fieldConfig) => {
+                accumulator[fieldConfig.key] = selectedClubForListModal[fieldConfig.key] || '';
+                return accumulator;
+            }, {}),
+        });
+        setIsDetailEditing(true);
+    }
+
+    function cancelDetailEditing() {
+        setIsDetailEditing(false);
+        setDetailDraft(null);
+    }
+
+    function updateDetailDraftField(fieldKey, fieldValue) {
+        setDetailDraft((currentDraft) => {
+            if (!currentDraft) {
+                return currentDraft;
+            }
+
+            return {
+                ...currentDraft,
+                [fieldKey]: fieldValue,
+            };
+        });
+    }
+
+    function saveDetailEditing() {
+        if (!selectedClubForListModal || !detailDraft) {
+            return;
+        }
+
+        const patch = editableFieldConfigs.reduce((accumulator, fieldConfig) => {
+            accumulator[fieldConfig.key] = detailDraft[fieldConfig.key] ?? '';
+            return accumulator;
+        }, {
+            callStatus: detailDraft.callStatus || DEFAULT_STATUS,
+            callNote: detailDraft.callNote || '',
+        });
+
+        persistPatch(selectedClubForListModal.id, patch);
+        setIsDetailEditing(false);
+        setDetailDraft(null);
+    }
+
     function exportCsvToFile() {
         const csvContent = buildExportCsv(state.clubs);
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -951,7 +1548,7 @@ export default function App() {
         setState((currentState) => ({
             ...currentState,
             clubs: applyImportPlan(currentState.clubs, importReview.importPlan),
-            selectedClubId: importReview.importPlan.newClubs[0]?.id || currentState.selectedClubId,
+            selectedClubId: null,
         }));
         setImportReview(null);
     }
@@ -968,6 +1565,10 @@ export default function App() {
         updateClubStatus(currentClub.id, callStatus);
     }
 
+    function buildApiUrl(path) {
+        return API_BASE_URL ? `${API_BASE_URL}${path}` : path;
+    }
+
     const pathLabel = state.history.length
         ? `Ścieżka: ${state.history.map((nodeId) => conversationNodes[nodeId].title).join(' → ')}`
         : 'Nowa rozmowa';
@@ -975,7 +1576,6 @@ export default function App() {
     function renderClubCard(club) {
         const statusTone = getStatusTone(club.callStatus);
         const csvTone = getConnectionTone(club.status);
-        const notePreview = (club.callNote || '').trim();
 
         return (
             <article key={club.id} className="task task-clickable" onClick={() => openClubDetails(club.id)}>
@@ -983,9 +1583,8 @@ export default function App() {
                     <div>
                         <div className="task-title">{club['Nazwa klubu'] || 'Bez nazwy'}</div>
                         <div className="task-meta">
-                            <span className={`status-pill ${statusTone}`}>{club.callStatus}</span>
+                            <span className={`status-pill ${statusTone}`}>{getCompactCallStatusLabel(club.callStatus)}</span>
                             <span className={`status-pill ${csvTone}`}>{club.status || 'Brak statusu z CSV'}</span>
-                            {notePreview ? <span className="status-pill blue">Notatka: {notePreview.slice(0, 42)}{notePreview.length > 42 ? '...' : ''}</span> : null}
                         </div>
                     </div>
                     <div className="task-actions" onClick={(event) => event.stopPropagation()}>
@@ -1003,9 +1602,6 @@ export default function App() {
                                 ))}
                             </select>
                         </label>
-                        <button type="button" className="secondary detail-open-button" onClick={() => openClubDetails(club.id)}>
-                            Otwórz
-                        </button>
                     </div>
                 </div>
             </article>
@@ -1017,6 +1613,8 @@ export default function App() {
         const email1 = club['mail kontaktowy 1']?.trim();
         const email2 = club['mail kontaktowy 2']?.trim();
         const phone = club['Nr telefonu']?.trim();
+        const isEditing = isDetailEditing && detailDraft;
+        const fieldValues = isEditing ? detailDraft : club;
 
         return (
             <div className="import-modal-backdrop" onClick={closeClubDetails}>
@@ -1034,6 +1632,21 @@ export default function App() {
                             ) : (
                                 <span className="muted">Brak adresu strony</span>
                             )}
+                            <label className="detail-status-wrap">
+                                <span>Status rozmowy</span>
+                                <select
+                                    ref={detailStatusSelectRef}
+                                    className={`status-select ${getStatusTone(club.callStatus || DEFAULT_STATUS)}`}
+                                    value={club.callStatus || DEFAULT_STATUS}
+                                    onChange={(event) => updateClubCallStatus(club.id, event.target.value)}
+                                >
+                                    {STATUS_OPTIONS.map((statusOption) => (
+                                        <option key={statusOption} value={statusOption}>
+                                            {statusOption}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
                             <button type="button" className="primary-action" onClick={() => startConversation(club.id)}>
                                 Zacznij rozmowę
                             </button>
@@ -1043,30 +1656,48 @@ export default function App() {
                         </div>
                     </div>
 
-                    <div className="detail-box">
-                        <h3>Edycja danych</h3>
-                        <div className="editor-grid">
-                            {editableFieldConfigs.map((fieldConfig) => (
-                                <label key={fieldConfig.key} className={`editor-field ${fieldConfig.textarea ? 'wide' : ''}`}>
-                                    <span>{fieldConfig.label}</span>
-                                    {fieldConfig.textarea ? (
-                                        <textarea
-                                            value={club[fieldConfig.key] || ''}
-                                            placeholder="Brak"
-                                            onChange={(event) => updateClubField(club.id, fieldConfig.key, event.target.value)}
-                                        />
-                                    ) : (
-                                        <input
-                                            type="text"
-                                            value={club[fieldConfig.key] || ''}
-                                            placeholder="Brak"
-                                            onChange={(event) => updateClubField(club.id, fieldConfig.key, event.target.value)}
-                                        />
-                                    )}
-                                </label>
-                            ))}
+                    {isEditing ? (
+                        <div className="detail-box">
+                            <div className="detail-box-header">
+                                <h3>Edycja danych</h3>
+                                <div className="detail-box-actions">
+                                    <button type="button" className="secondary" onClick={cancelDetailEditing}>
+                                        Anuluj
+                                    </button>
+                                    <button type="button" className="primary-action" onClick={saveDetailEditing}>
+                                        Zapisz
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="editor-grid">
+                                {editableFieldConfigs.map((fieldConfig) => (
+                                    <label key={fieldConfig.key} className={`editor-field ${fieldConfig.textarea ? 'wide' : ''}`}>
+                                        <span>{fieldConfig.label}</span>
+                                        {fieldConfig.textarea ? (
+                                            <textarea
+                                                value={fieldValues[fieldConfig.key] || ''}
+                                                placeholder="Brak"
+                                                onChange={(event) => updateDetailDraftField(fieldConfig.key, event.target.value)}
+                                            />
+                                        ) : (
+                                            <input
+                                                type="text"
+                                                value={fieldValues[fieldConfig.key] || ''}
+                                                placeholder="Brak"
+                                                onChange={(event) => updateDetailDraftField(fieldConfig.key, event.target.value)}
+                                            />
+                                        )}
+                                    </label>
+                                ))}
+                            </div>
                         </div>
-                    </div>
+                    ) : (
+                        <div className="detail-box detail-box-compact-actions">
+                            <button type="button" className="secondary" onClick={startDetailEditing}>
+                                Edytuj dane
+                            </button>
+                        </div>
+                    )}
 
                     <div className="details-grid">
                         <div className="detail-box">
@@ -1110,11 +1741,15 @@ export default function App() {
 
                     <div className="detail-box">
                         <h3>Notatka po rozmowie</h3>
-                        <textarea
-                            value={club.callNote || ''}
-                            placeholder="Dodaj notatkę po rozmowie..."
-                            onChange={(event) => updateClubNote(club.id, event.target.value)}
-                        />
+                        {isEditing ? (
+                            <textarea
+                                value={detailDraft?.callNote || ''}
+                                placeholder="Dodaj notatkę po rozmowie..."
+                                onChange={(event) => updateDetailDraftField('callNote', event.target.value)}
+                            />
+                        ) : (
+                            <p>{club.callNote || 'Brak'}</p>
+                        )}
                     </div>
                 </div>
             </div>
@@ -1224,206 +1859,305 @@ export default function App() {
         );
     }
 
+    if (authLoading) {
+        return renderAuthScreen();
+    }
+
+    if (authMode === 'reset') {
+        return renderAuthScreen();
+    }
+
+    if (!session) {
+        return renderAuthScreen();
+    }
+
     return (
         <div className="app">
             <header>
                 <img className="logo-image" src={logoOqla} alt="Oqla" />
                 <div className="badge">Sales Assistant</div>
                 <div className="badge cloud-badge">{cloudMessage}</div>
+                <div className="header-actions">
+                    {userProfile?.is_admin ? (
+                        <>
+                            <button type="button" className={activePanel === 'board' ? 'secondary active-nav' : 'secondary'} onClick={() => setActivePanel('board')}>
+                                Aplikacja
+                            </button>
+                            <button type="button" className={activePanel === 'admin' ? 'secondary active-nav' : 'secondary'} onClick={() => setActivePanel('admin')}>
+                                Admin
+                            </button>
+                        </>
+                    ) : null}
+                    <span className="badge user-badge">{session.user.email}</span>
+                    <button type="button" className="secondary" onClick={handleLogout}>
+                        Wyloguj
+                    </button>
+                </div>
             </header>
 
-            <main className={state.view === 'conversation' ? 'single-column' : 'layout'}>
-                {state.view === 'list' ? (
-                    <section>
-                        <div className="card">
-                            <div className="hero">
-                                <div>
-                                    <div className="step">Lista telefonów do wykonania</div>
-                                    <h1>Import CSV i kontrola rozmów</h1>
-                                    <p className="subtle">
-                                        Wgraj plik CSV z klubami, a aplikacja zamieni go na listę zadań. Każdy rekord można rozwinąć, zobaczyć dane kontaktowe, otworzyć stronę klubu, zacząć rozmowę i zapisać własną notatkę oraz status po kontakcie.
-                                    </p>
+            {activePanel === 'admin' ? renderAdminPanel() : (
+                <main className={state.view === 'conversation' ? 'single-column' : 'layout'}>
+                    {state.view === 'list' ? (
+                        <section>
+                            <div className="card">
+                                <div className="hero">
+                                    <div>
+                                        <div className="step">Lista telefonów do wykonania</div>
+                                        <h1>Import CSV i kontrola rozmów</h1>
+                                        <p className="subtle">
+                                            Wgraj plik CSV z klubami, a aplikacja zamieni go na listę zadań. Każdy rekord można rozwinąć, zobaczyć dane kontaktowe, otworzyć stronę klubu, zacząć rozmowę i zapisać własną notatkę oraz status po kontakcie.
+                                        </p>
+                                    </div>
+
+                                    <div className="upload-row">
+                                        <label className="file-label">
+                                            Wczytaj CSV
+                                            <input type="file" accept=".csv,text/csv" onChange={(event) => handleCsvUpload(event.target.files?.[0])} />
+                                        </label>
+                                        <button type="button" className="secondary" onClick={loadSample}>
+                                            Załaduj próbkę
+                                        </button>
+                                        <button type="button" className="primary-action" onClick={exportCsvToFile}>
+                                            Eksportuj CSV do zespołu
+                                        </button>
+                                    </div>
                                 </div>
 
-                                <div className="upload-row">
-                                    <label className="file-label">
-                                        Wczytaj CSV
-                                        <input type="file" accept=".csv,text/csv" onChange={(event) => handleCsvUpload(event.target.files?.[0])} />
-                                    </label>
-                                    <button type="button" className="secondary" onClick={loadSample}>
-                                        Załaduj próbkę
-                                    </button>
-                                    <button type="button" className="primary-action" onClick={exportCsvToFile}>
-                                        Eksportuj CSV do zespołu
-                                    </button>
+                                {csvImportError ? <p className="error-message">{csvImportError}</p> : null}
+                            </div>
+
+                            <div className="summary-grid">
+                                <div className="summary-card">
+                                    <div className="summary-value">{summary.total}</div>
+                                    <div className="summary-label">klubów w CSV</div>
+                                </div>
+                                <div className="summary-card">
+                                    <div className="summary-value">{summary.pending}</div>
+                                    <div className="summary-label">do kontaktu</div>
+                                </div>
+                                <div className="summary-card">
+                                    <div className="summary-value">{summary.offer}</div>
+                                    <div className="summary-label">wysłano ofertę</div>
+                                </div>
+                                <div className="summary-card">
+                                    <div className="summary-value">{summary.meetings}</div>
+                                    <div className="summary-label">spotkanie zaplanowane</div>
                                 </div>
                             </div>
 
-                            {csvImportError ? <p className="error-message">{csvImportError}</p> : null}
-                        </div>
+                            <div className="board-grid">
+                                {boardColumns.map((column) => (
+                                    <section key={column.id} className="board-column">
+                                        <div className="board-header">
+                                            <h3>{column.title}</h3>
+                                            <span className="board-count">{column.clubs.length}</span>
+                                        </div>
+                                        <div className="list">
+                                            {column.clubs.length ? column.clubs.map((club) => renderClubCard(club)) : <div className="empty-column">Brak klubów</div>}
+                                        </div>
+                                    </section>
+                                ))}
+                            </div>
+                        </section>
+                    ) : null}
 
-                        <div className="summary-grid">
-                            <div className="summary-card">
-                                <div className="summary-value">{summary.total}</div>
-                                <div className="summary-label">klubów w CSV</div>
-                            </div>
-                            <div className="summary-card">
-                                <div className="summary-value">{summary.pending}</div>
-                                <div className="summary-label">do kontaktu</div>
-                            </div>
-                            <div className="summary-card">
-                                <div className="summary-value">{summary.offer}</div>
-                                <div className="summary-label">wysłano ofertę</div>
-                            </div>
-                            <div className="summary-card">
-                                <div className="summary-value">{summary.meetings}</div>
-                                <div className="summary-label">spotkanie zaplanowane</div>
-                            </div>
-                        </div>
-
-                        <div className="board-grid">
-                            {boardColumns.map((column) => (
-                                <section key={column.id} className="board-column">
-                                    <div className="board-header">
-                                        <h3>{column.title}</h3>
-                                        <span className="board-count">{column.clubs.length}</span>
+                    {state.view === 'list' ? (
+                        <aside>
+                            <div className="card compact">
+                            <div className="workflow-card-top">
+                                    <div className="step">Jak to działa</div>
+                                <button
+                                    type="button"
+                                    className="info-icon"
+                                    aria-label="Pokaż wymagane kolumny CSV"
+                                    aria-expanded={workflowInfoOpen}
+                                    onClick={() => setWorkflowInfoOpen((current) => !current)}
+                                >
+                                    i
+                                </button>
+                                {workflowInfoOpen ? (
+                                    <div className="workflow-popover" role="dialog" aria-label="Wymagane kolumny CSV">
+                                        <div className="workflow-popover-title">CSV powinien zawierać kolumny:</div>
+                                        <p>
+                                            <b>Nazwa klubu</b>, <b>adres strony</b>, <b>mail kontaktowy 1</b>, <b>mail kontaktowy 2</b>,
+                                            <b> Nr telefonu</b>, <b>Imie i nazwisko kontaktu</b>, <b>status</b>, <b>Padel double</b>,
+                                            <b> Padel Single</b>, <b>Ilość kamer</b>, <b>Województwo</b>, <b>Notatka</b>.
+                                        </p>
                                     </div>
-                                    <div className="list">
-                                        {column.clubs.length ? column.clubs.map((club) => renderClubCard(club)) : <div className="empty-column">Brak klubów</div>}
-                                    </div>
-                                </section>
-                            ))}
-                        </div>
-                    </section>
-                ) : null}
-
-                {state.view === 'list' ? (
-                    <aside>
-                        <div className="card compact">
-                            <div className="step">Jak to działa</div>
+                                ) : null}
+                            </div>
                             <h2>Krótki workflow</h2>
                             <p className="subtle">
                                 1. Wczytaj CSV z klubami.
                                 <br />
                                 2. Każdy klub trafia do 1 z 4 kolumn statusowych.
-                                <br />
-                                3. Domyślny status to <b>{DEFAULT_STATUS}</b>.
-                                <br />
-                                4. Zmień status z listy rozwijanej, a klub automatycznie przejdzie do odpowiedniej kolumny.
-                                <br />
-                                5. Po rozmowie dopisz notatkę i kliknij <b>Zacznij rozmowę</b> dla scenariusza sprzedażowego.
-                            </p>
-                        </div>
-
-                        <div className="card compact">
-                            <div className="step">Dostępne kolumny</div>
-                            <div className="conversation-context">
-                                <span className="status-pill blue">Nazwa klubu</span>
-                                <span className="status-pill blue">Adres strony</span>
-                                <span className="status-pill blue">Maile kontaktowe</span>
-                                <span className="status-pill blue">Numer telefonu</span>
-                                <span className="status-pill blue">Kontakt</span>
-                                <span className="status-pill blue">Status</span>
-                                <span className="status-pill blue">Padel double</span>
-                                <span className="status-pill blue">Padel Single</span>
-                                <span className="status-pill blue">Ilość kamer</span>
-                                <span className="status-pill blue">Województwo</span>
-                                <span className="status-pill blue">Notatka</span>
-                            </div>
-                        </div>
-                    </aside>
-                ) : null}
-
-                {importReview ? (
-                    <div className="import-modal-backdrop" onClick={cancelImportReview}>
-                        <div className="import-modal" onClick={(event) => event.stopPropagation()}>
-                            <div className="conversation-top">
-                                <div>
-                                    <div className="step">Import CSV</div>
-                                    <h1>Wykryto istniejące kluby</h1>
-                                    <p className="subtle">
-                                        {importReview.sourceName} • nowe kluby zostaną dodane, a dla dopasowanych rekordów możesz wybrać, które dane z nowego CSV nadpisać.
-                                    </p>
-                                </div>
-                                <div className="conversation-actions">
-                                    <button type="button" className="secondary" onClick={cancelImportReview}>
-                                        Anuluj
-                                    </button>
-                                    <button type="button" className="primary-action" onClick={confirmImportReview}>
-                                        Zastosuj wybrane zmiany
-                                    </button>
-                                </div>
+                                    <br />
+                                    3. Domyślny status to <b>{DEFAULT_STATUS}</b>.
+                                    <br />
+                                    4. Zmień status z listy rozwijanej, a klub automatycznie przejdzie do odpowiedniej kolumny.
+                                    <br />
+                                    5. Po rozmowie dopisz notatkę i kliknij <b>Zacznij rozmowę</b> dla scenariusza sprzedażowego.
+                                </p>
                             </div>
 
-                            <div className="import-summary-grid">
-                                <div className="summary-card">
-                                    <div className="summary-value">{importReview.importPlan.newClubs.length}</div>
-                                    <div className="summary-label">nowych klubów do dodania</div>
+                            <div className="card compact">
+                                <div className="memo-card-top">
+                                    <div>
+                                        <div className="step">Wspólne memo</div>
+                                        <h2>Szybkie notatki dla zespołu</h2>
+                                    </div>
+                                    {!isMemoComposerOpen ? (
+                                        <button type="button" className="secondary" onClick={() => setIsMemoComposerOpen(true)}>
+                                            Dodaj
+                                        </button>
+                                    ) : null}
                                 </div>
-                                <div className="summary-card">
-                                    <div className="summary-value">{importReview.importPlan.conflicts.length}</div>
-                                    <div className="summary-label">dopasowań po nazwie i e-mailu</div>
-                                </div>
-                            </div>
 
-                            <div className="import-conflict-list">
-                                {importReview.importPlan.conflicts.map((conflict) => (
-                                    <div key={conflict.existingClubId} className="import-conflict-card">
-                                        <div className="import-conflict-header">
-                                            <label className="import-conflict-toggle">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={conflict.selected}
-                                                    onChange={(event) => setImportConflictSelected(conflict.existingClubId, event.target.checked)}
-                                                />
-                                                <span>
-                                                    {conflict.existingClub['Nazwa klubu']}
-                                                </span>
-                                            </label>
-                                            <div className="task-meta">
-                                                <span className="status-pill blue">{conflict.existingClub.callStatus}</span>
-                                                <span className="status-pill amber">Nowy CSV ma różnice</span>
-                                            </div>
+                                {isMemoComposerOpen ? (
+                                    <form className="memo-composer" onSubmit={handleCreateSharedMemo}>
+                                        <textarea
+                                            value={memoDraft}
+                                            onChange={(event) => setMemoDraft(event.target.value)}
+                                            placeholder="Wpisz notatkę widoczną dla całego zespołu..."
+                                            rows={5}
+                                        />
+                                        <div className="memo-composer-actions">
+                                            <button type="submit" className="memo-icon-button memo-confirm" aria-label="Zatwierdź notatkę">
+                                                ✓
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="memo-icon-button memo-cancel"
+                                                aria-label="Odrzuć notatkę"
+                                                onClick={() => {
+                                                    setIsMemoComposerOpen(false);
+                                                    setMemoDraft('');
+                                                }}
+                                            >
+                                                ×
+                                            </button>
                                         </div>
+                                    </form>
+                                ) : null}
 
-                                        <div className="import-diff-list">
-                                            {conflict.diffs.map((diff) => (
-                                                <label key={diff.key} className="import-diff-row">
+                                <div className="memo-list">
+                                    {sharedMemos.length ? sharedMemos.map((memo) => (
+                                        <div key={memo.id} className="memo-item">
+                                            <div className="memo-item-head">
+                                                <strong>{memo.author_name}</strong>
+                                            </div>
+                                            <div className="memo-item-meta">
+                                                <span>{new Date(memo.created_at).toLocaleString('pl-PL')}</span>
+                                                {(memo.author_id === session?.user?.id || userProfile?.is_admin) ? (
+                                                    <button
+                                                        type="button"
+                                                        className="memo-delete"
+                                                        aria-label="Usuń notatkę"
+                                                        onClick={() => handleDeleteSharedMemo(memo.id)}
+                                                    >
+                                                        ×
+                                                    </button>
+                                                ) : null}
+                                            </div>
+                                            <p>{memo.note}</p>
+                                        </div>
+                                    )) : <p className="subtle">Brak wspólnych notatek.</p>}
+                                </div>
+                            </div>
+                        </aside>
+                    ) : null}
+
+                    {importReview ? (
+                        <div className="import-modal-backdrop" onClick={cancelImportReview}>
+                            <div className="import-modal" onClick={(event) => event.stopPropagation()}>
+                                <div className="conversation-top">
+                                    <div>
+                                        <div className="step">Import CSV</div>
+                                        <h1>Wykryto istniejące kluby</h1>
+                                        <p className="subtle">
+                                            {importReview.sourceName} • nowe kluby zostaną dodane, a dla dopasowanych rekordów możesz wybrać, które dane z nowego CSV nadpisać.
+                                        </p>
+                                    </div>
+                                    <div className="conversation-actions">
+                                        <button type="button" className="secondary" onClick={cancelImportReview}>
+                                            Anuluj
+                                        </button>
+                                        <button type="button" className="primary-action" onClick={confirmImportReview}>
+                                            Zastosuj wybrane zmiany
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="import-summary-grid">
+                                    <div className="summary-card">
+                                        <div className="summary-value">{importReview.importPlan.newClubs.length}</div>
+                                        <div className="summary-label">nowych klubów do dodania</div>
+                                    </div>
+                                    <div className="summary-card">
+                                        <div className="summary-value">{importReview.importPlan.conflicts.length}</div>
+                                        <div className="summary-label">dopasowań po nazwie i e-mailu</div>
+                                    </div>
+                                </div>
+
+                                <div className="import-conflict-list">
+                                    {importReview.importPlan.conflicts.map((conflict) => (
+                                        <div key={conflict.existingClubId} className="import-conflict-card">
+                                            <div className="import-conflict-header">
+                                                <label className="import-conflict-toggle">
                                                     <input
                                                         type="checkbox"
-                                                        checked={conflict.selected && diff.selected}
-                                                        disabled={!conflict.selected}
-                                                        onChange={(event) => setImportConflictField(conflict.existingClubId, diff.key, event.target.checked)}
+                                                        checked={conflict.selected}
+                                                        onChange={(event) => setImportConflictSelected(conflict.existingClubId, event.target.checked)}
                                                     />
-                                                    <div>
-                                                        <div className="import-diff-title">{diff.label}</div>
-                                                        <div className="import-diff-values">
-                                                            <span>Aktualnie: {diff.existingValue || 'Brak'}</span>
-                                                            <span>Nowy CSV: {diff.importedValue || 'Brak'}</span>
-                                                        </div>
-                                                    </div>
+                                                    <span>
+                                                        {conflict.existingClub['Nazwa klubu']}
+                                                    </span>
                                                 </label>
-                                            ))}
+                                                <div className="task-meta">
+                                                    <span className="status-pill blue">{conflict.existingClub.callStatus}</span>
+                                                    <span className="status-pill amber">Nowy CSV ma różnice</span>
+                                                </div>
+                                            </div>
+
+                                            <div className="import-diff-list">
+                                                {conflict.diffs.map((diff) => (
+                                                    <label key={diff.key} className="import-diff-row">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={conflict.selected && diff.selected}
+                                                            disabled={!conflict.selected}
+                                                            onChange={(event) => setImportConflictField(conflict.existingClubId, diff.key, event.target.checked)}
+                                                        />
+                                                        <div>
+                                                            <div className="import-diff-title">{diff.label}</div>
+                                                            <div className="import-diff-values">
+                                                                <span>Aktualnie: {diff.existingValue || 'Brak'}</span>
+                                                                <span>Nowy CSV: {diff.importedValue || 'Brak'}</span>
+                                                            </div>
+                                                        </div>
+                                                    </label>
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            {importReview.importPlan.newClubs.length ? (
-                                <div className="detail-box">
-                                    <h3>Nowe kluby</h3>
-                                    <p>
-                                        {importReview.importPlan.newClubs.map((club) => club['Nazwa klubu']).join(', ')}
-                                    </p>
+                                    ))}
                                 </div>
-                            ) : null}
-                        </div>
-                    </div>
-                ) : null}
 
-                {state.view === 'conversation' ? renderConversationView() : null}
-                {state.view === 'list' && !importReview && selectedClubForListModal ? renderClubDetailsModal(selectedClubForListModal) : null}
-            </main>
+                                {importReview.importPlan.newClubs.length ? (
+                                    <div className="detail-box">
+                                        <h3>Nowe kluby</h3>
+                                        <p>
+                                            {importReview.importPlan.newClubs.map((club) => club['Nazwa klubu']).join(', ')}
+                                        </p>
+                                    </div>
+                                ) : null}
+                            </div>
+                        </div>
+                    ) : null}
+
+                    {state.view === 'conversation' ? renderConversationView() : null}
+                    {state.view === 'list' && !importReview && selectedClubForListModal ? renderClubDetailsModal(selectedClubForListModal) : null}
+                </main>
+            )}
         </div>
     );
 }
