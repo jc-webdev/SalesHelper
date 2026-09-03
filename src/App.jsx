@@ -235,6 +235,58 @@ const initialState = {
     history: [],
 };
 
+function getRouteStateFromLocation() {
+    if (typeof window === 'undefined') {
+        return {
+            view: 'list',
+            selectedClubId: null,
+            activeClubId: null,
+            currentNode: 'start',
+            history: [],
+        };
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode');
+    const selectedClubId = params.get('club') || null;
+    const activeClubId = mode === 'conversation' ? selectedClubId : null;
+    const currentNode = mode === 'conversation' ? (params.get('node') || 'start') : 'start';
+    const history = mode === 'conversation'
+        ? (params.get('history') || '').split('>').map((nodeId) => nodeId.trim()).filter(Boolean)
+        : [];
+
+    return {
+        view: mode === 'conversation' ? 'conversation' : 'list',
+        selectedClubId: mode === 'list' ? selectedClubId : null,
+        activeClubId,
+        currentNode,
+        history,
+    };
+}
+
+function buildLocationSearchFromState(state) {
+    const params = new URLSearchParams();
+
+    if (state.view === 'conversation' && state.activeClubId) {
+        params.set('mode', 'conversation');
+        params.set('club', state.activeClubId);
+        if (state.currentNode && state.currentNode !== 'start') {
+            params.set('node', state.currentNode);
+        }
+        if (Array.isArray(state.history) && state.history.length) {
+            params.set('history', state.history.join('>'));
+        }
+    } else if (state.view === 'list' && state.selectedClubId) {
+        params.set('mode', 'list');
+        params.set('club', state.selectedClubId);
+    }
+
+    const nextSearch = params.toString();
+    return nextSearch ? `?${nextSearch}` : '';
+}
+
+const initialRouteState = getRouteStateFromLocation();
+
 const editableFieldConfigs = [
     { key: 'adres strony', label: 'Adres strony' },
     { key: 'mail kontaktowy 1', label: 'Mail kontaktowy 1' },
@@ -264,8 +316,55 @@ const exportFieldConfigs = [
     { key: 'Województwo', label: 'Województwo' },
     { key: 'Notatka', label: 'Notatka' },
     { key: 'callStatus', label: 'status po rozmowie' },
-    { key: 'callNote', label: 'notatka po rozmowie' },
 ];
+
+function createNoteId() {
+    if (globalThis.crypto?.randomUUID) {
+        return globalThis.crypto.randomUUID();
+    }
+
+    return `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeTimelineNotes(notes, fallbackText = '', fallbackCreatedAt = '') {
+    if (Array.isArray(notes)) {
+        return notes
+            .map((note, index) => {
+                if (typeof note === 'string') {
+                    const text = note.trim();
+                    return text ? {
+                        id: `legacy-${index}-${text.slice(0, 12)}`,
+                        text,
+                        createdAt: fallbackCreatedAt || new Date().toISOString(),
+                    } : null;
+                }
+
+                const text = String(note?.text || note?.content || '').trim();
+                if (!text) {
+                    return null;
+                }
+
+                return {
+                    id: note?.id || createNoteId(),
+                    text,
+                    createdAt: note?.createdAt || note?.created_at || fallbackCreatedAt || new Date().toISOString(),
+                    author: note?.author || note?.authorEmail || '',
+                };
+            })
+            .filter(Boolean);
+    }
+
+    const text = String(fallbackText || '').trim();
+    if (!text) {
+        return [];
+    }
+
+    return [{
+        id: createNoteId(),
+        text,
+        createdAt: fallbackCreatedAt || new Date().toISOString(),
+    }];
+}
 
 function normalizeText(value) {
     return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
@@ -323,6 +422,7 @@ function buildImportPlan(importedClubs, existingClubs) {
                 ...importedClub,
                 callStatus: DEFAULT_STATUS,
                 callNote: '',
+                notesTimeline: [],
             });
             return;
         }
@@ -405,6 +505,7 @@ function normalizeLoadedClubs(clubs) {
         ...club,
         callStatus: club.callStatus || DEFAULT_STATUS,
         callNote: club.callNote || '',
+        notesTimeline: normalizeTimelineNotes(club.notesTimeline, club.callNote, club.updatedAt || club.updated_at || ''),
     }));
 }
 
@@ -422,6 +523,11 @@ function mapClubToSupabaseRow(club) {
 
 function mapSupabaseRowToClub(row) {
     const payload = row.payload || {};
+    const notesTimeline = normalizeTimelineNotes(
+        payload.notesTimeline || payload.notes || [],
+        row.call_note || payload.callNote || '',
+        row.updated_at || payload.updatedAt || ''
+    );
 
     return {
         ...payload,
@@ -431,6 +537,7 @@ function mapSupabaseRowToClub(row) {
         'mail kontaktowy 2': row.email_2 || payload['mail kontaktowy 2'] || '',
         callStatus: row.call_status || payload.callStatus || DEFAULT_STATUS,
         callNote: row.call_note || payload.callNote || '',
+        notesTimeline,
     };
 }
 
@@ -549,6 +656,7 @@ function parseCsv(text) {
         record.id = slugify(record['Nazwa klubu'] || `klub-${index + 1}-${index}`);
         record.callStatus = DEFAULT_STATUS;
         record.callNote = '';
+        record.notesTimeline = [];
         return record;
     });
 }
@@ -558,6 +666,7 @@ function normalizeClub(record, existingRecord) {
         ...record,
         callStatus: existingRecord?.callStatus || record.callStatus || DEFAULT_STATUS,
         callNote: existingRecord?.callNote || record.callNote || '',
+        notesTimeline: existingRecord?.notesTimeline || record.notesTimeline || [],
     };
 }
 
@@ -587,10 +696,10 @@ function getStatusTone(status) {
 
 function getCompactCallStatusLabel(status) {
     if (status === DEFAULT_STATUS) {
-        return 'Brak połączenia';
+        return DEFAULT_STATUS;
     }
     if (status === LEGACY_PENDING_STATUS) {
-        return 'Nie odbyła się';
+        return DEFAULT_STATUS;
     }
     if (status === STATUS_SENT_OFFER) {
         return 'Wysłano ofertę';
@@ -613,7 +722,14 @@ function getConnectionTone(csvStatus) {
 }
 
 export default function App() {
-    const [state, setState] = useState(initialState);
+    const [state, setState] = useState(() => ({
+        ...initialState,
+        view: initialRouteState.view,
+        selectedClubId: initialRouteState.selectedClubId,
+        activeClubId: initialRouteState.activeClubId,
+        currentNode: initialRouteState.currentNode,
+        history: initialRouteState.history,
+    }));
     const [session, setSession] = useState(null);
     const [userProfile, setUserProfile] = useState(null);
     const [teamMembers, setTeamMembers] = useState([]);
@@ -638,6 +754,10 @@ export default function App() {
     const [resetPasswordForm, setResetPasswordForm] = useState({ password: '', confirmPassword: '' });
     const [resetPasswordMessage, setResetPasswordMessage] = useState('');
     const [resetPasswordError, setResetPasswordError] = useState('');
+    const [draggedClubId, setDraggedClubId] = useState(null);
+    const [dragOverColumnId, setDragOverColumnId] = useState(null);
+    const [isNoteComposerOpen, setIsNoteComposerOpen] = useState(false);
+    const [noteDraft, setNoteDraft] = useState('');
     const detailStatusSelectRef = useRef(null);
 
     useEffect(() => {
@@ -691,12 +811,12 @@ export default function App() {
                 setAdminResetLink(null);
                 setState((currentState) => ({
                     ...currentState,
-                    view: 'list',
+                    view: initialRouteState.view,
                     clubs: [],
-                    selectedClubId: null,
-                    activeClubId: null,
-                    currentNode: 'start',
-                    history: [],
+                    selectedClubId: initialRouteState.selectedClubId,
+                    activeClubId: initialRouteState.activeClubId,
+                    currentNode: initialRouteState.currentNode,
+                    history: initialRouteState.history,
                 }));
                 setSharedMemos([]);
                 setIsMemoComposerOpen(false);
@@ -735,14 +855,19 @@ export default function App() {
                 return;
             }
 
+            const routeClubId = initialRouteState.activeClubId || initialRouteState.selectedClubId;
+            const loadedClubs = normalizeLoadedClubs((clubs || []).map(mapSupabaseRowToClub));
+            const routeClubExists = routeClubId ? loadedClubs.some((club) => club.id === routeClubId) : false;
+            const resolvedView = initialRouteState.view === 'conversation' && routeClubExists ? 'conversation' : 'list';
+
             setState((currentState) => ({
                 ...currentState,
-                view: 'list',
-                clubs: normalizeLoadedClubs((clubs || []).map(mapSupabaseRowToClub)),
-                selectedClubId: null,
-                activeClubId: null,
-                currentNode: 'start',
-                history: [],
+                view: resolvedView,
+                clubs: loadedClubs,
+                selectedClubId: resolvedView === 'list' && routeClubExists ? routeClubId : null,
+                activeClubId: resolvedView === 'conversation' && routeClubExists ? routeClubId : null,
+                currentNode: resolvedView === 'conversation' && routeClubExists ? initialRouteState.currentNode : 'start',
+                history: resolvedView === 'conversation' && routeClubExists ? initialRouteState.history : [],
             }));
             setCloudMessage('Połączono z Supabase');
             setClubsLoading(false);
@@ -834,13 +959,29 @@ export default function App() {
         };
     }, [selectedClubForListModal?.id]);
 
+    useEffect(() => {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        const nextSearch = buildLocationSearchFromState(state);
+        const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        const nextUrlObject = new URL(window.location.href);
+        nextUrlObject.search = nextSearch;
+        const nextUrl = `${nextUrlObject.pathname}${nextUrlObject.search}${nextUrlObject.hash}`;
+
+        if (currentUrl !== nextUrl) {
+            window.history.replaceState(null, '', nextUrl);
+        }
+    }, [state.view, state.selectedClubId, state.activeClubId, state.currentNode, state.history]);
+
     const summary = useMemo(() => {
         const total = state.clubs.length;
         const pending = state.clubs.filter((club) => [DEFAULT_STATUS, LEGACY_PENDING_STATUS].includes(club.callStatus)).length;
         const offer = state.clubs.filter((club) => club.callStatus === STATUS_SENT_OFFER).length;
         const meetings = state.clubs.filter((club) => club.callStatus === STATUS_MEETING).length;
         const lost = state.clubs.filter((club) => club.callStatus === STATUS_LOST).length;
-        const notes = state.clubs.filter((club) => club.callNote.trim()).length;
+        const notes = state.clubs.reduce((count, club) => count + (Array.isArray(club.notesTimeline) ? club.notesTimeline.length : 0), 0);
 
         return { total, pending, offer, lost, meetings, notes };
     }, [state.clubs]);
@@ -874,6 +1015,8 @@ export default function App() {
         }));
         setIsDetailEditing(false);
         setDetailDraft(null);
+        setIsNoteComposerOpen(false);
+        setNoteDraft('');
     }
 
     function closeClubDetails() {
@@ -883,6 +1026,8 @@ export default function App() {
         }));
         setIsDetailEditing(false);
         setDetailDraft(null);
+        setIsNoteComposerOpen(false);
+        setNoteDraft('');
     }
 
     function loadSample() {
@@ -993,6 +1138,35 @@ export default function App() {
 
     function updateClubNote(clubId, callNote) {
         persistPatch(clubId, { callNote });
+    }
+
+    function addTaskNote(noteText) {
+        const targetClub = selectedClubForListModal || currentClub;
+        if (!targetClub) {
+            return;
+        }
+
+        const text = String(noteText || '').trim();
+        if (!text) {
+            return;
+        }
+
+        const nextTimeline = [
+            ...(Array.isArray(targetClub.notesTimeline) ? targetClub.notesTimeline : []),
+            {
+                id: createNoteId(),
+                text,
+                createdAt: new Date().toISOString(),
+                author: session?.user?.email || userProfile?.full_name || 'Użytkownik',
+            },
+        ];
+
+        persistPatch(targetClub.id, {
+            notesTimeline: nextTimeline,
+            callNote: text,
+        });
+        setIsNoteComposerOpen(false);
+        setNoteDraft('');
     }
 
     function updateClubField(clubId, fieldKey, fieldValue) {
@@ -1436,7 +1610,6 @@ export default function App() {
 
         setDetailDraft({
             callStatus: selectedClubForListModal.callStatus || DEFAULT_STATUS,
-            callNote: selectedClubForListModal.callNote || '',
             ...editableFieldConfigs.reduce((accumulator, fieldConfig) => {
                 accumulator[fieldConfig.key] = selectedClubForListModal[fieldConfig.key] || '';
                 return accumulator;
@@ -1473,7 +1646,6 @@ export default function App() {
             return accumulator;
         }, {
             callStatus: detailDraft.callStatus || DEFAULT_STATUS,
-            callNote: detailDraft.callNote || '',
         });
 
         persistPatch(selectedClubForListModal.id, patch);
@@ -1565,8 +1737,143 @@ export default function App() {
         updateClubStatus(currentClub.id, callStatus);
     }
 
+    function openTaskNoteComposer() {
+        setIsNoteComposerOpen(true);
+        setNoteDraft('');
+        if (selectedClubForListModal || currentClub) {
+            return;
+        }
+    }
+
+    function getColumnTargetStatus(column) {
+        return column.statuses[0] || DEFAULT_STATUS;
+    }
+
+    function handleDragStart(event, clubId) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', clubId);
+        setDraggedClubId(clubId);
+    }
+
+    function handleDragEnd() {
+        setDraggedClubId(null);
+        setDragOverColumnId(null);
+    }
+
+    function handleColumnDragOver(event, columnId) {
+        event.preventDefault();
+        setDragOverColumnId(columnId);
+    }
+
+    function handleColumnDragLeave(event, columnId) {
+        if (event.currentTarget.contains(event.relatedTarget)) {
+            return;
+        }
+
+        setDragOverColumnId((currentColumnId) => (currentColumnId === columnId ? null : currentColumnId));
+    }
+
+    function handleColumnDrop(event, column) {
+        event.preventDefault();
+        const droppedClubId = draggedClubId || event.dataTransfer.getData('text/plain');
+        if (!droppedClubId) {
+            return;
+        }
+
+        const targetStatus = getColumnTargetStatus(column);
+        const club = state.clubs.find((item) => item.id === droppedClubId);
+
+        setDraggedClubId(null);
+        setDragOverColumnId(null);
+
+        if (!club || club.callStatus === targetStatus) {
+            return;
+        }
+
+        updateClubStatus(club.id, targetStatus);
+    }
+
     function buildApiUrl(path) {
         return API_BASE_URL ? `${API_BASE_URL}${path}` : path;
+    }
+
+    function renderTimeline(notesTimeline) {
+        if (!Array.isArray(notesTimeline) || !notesTimeline.length) {
+            return <p className="subtle">Brak notatek na timeline.</p>;
+        }
+
+        return (
+            <div className="timeline-list">
+                {notesTimeline
+                    .slice()
+                    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
+                    .map((note) => (
+                        <div key={note.id} className="timeline-item">
+                            <div className="timeline-item-head">
+                                <strong>{note.author || 'Użytkownik'}</strong>
+                                <span>{new Date(note.createdAt).toLocaleString('pl-PL')}</span>
+                            </div>
+                            <p>{note.text}</p>
+                        </div>
+                    ))}
+            </div>
+        );
+    }
+
+    function renderNoteComposer(targetClub, compact = false) {
+        if (!targetClub) {
+            return null;
+        }
+
+        return (
+            <div className={`note-composer-panel ${compact ? 'compact' : ''}`}>
+                <div className="memo-card-top">
+                    <div>
+                        <h3>Dodaj nową notatkę</h3>
+                        <p className="subtle">Zapisze się od razu w timeline dla tego taska.</p>
+                    </div>
+                    {!isNoteComposerOpen ? (
+                        <button type="button" className="secondary" onClick={() => setIsNoteComposerOpen(true)}>
+                            Dodaj nową notatkę
+                        </button>
+                    ) : null}
+                </div>
+
+                {isNoteComposerOpen ? (
+                    <div className="memo-composer">
+                        <textarea
+                            value={noteDraft}
+                            onChange={(event) => setNoteDraft(event.target.value)}
+                            placeholder="Wpisz notatkę do timeline..."
+                            rows={compact ? 3 : 4}
+                        />
+                        <div className="memo-composer-actions">
+                            <button
+                                type="button"
+                                className="memo-icon-button memo-confirm"
+                                aria-label="Zapisz notatkę"
+                                onClick={() => addTaskNote(noteDraft)}
+                            >
+                                ✓
+                            </button>
+                            <button
+                                type="button"
+                                className="memo-icon-button memo-cancel"
+                                aria-label="Anuluj notatkę"
+                                onClick={() => {
+                                    setIsNoteComposerOpen(false);
+                                    setNoteDraft('');
+                                }}
+                            >
+                                ×
+                            </button>
+                        </div>
+                    </div>
+                ) : null}
+
+                {renderTimeline(targetClub.notesTimeline)}
+            </div>
+        );
     }
 
     const pathLabel = state.history.length
@@ -1576,9 +1883,17 @@ export default function App() {
     function renderClubCard(club) {
         const statusTone = getStatusTone(club.callStatus);
         const csvTone = getConnectionTone(club.status);
+        const isDragging = draggedClubId === club.id;
 
         return (
-            <article key={club.id} className="task task-clickable" onClick={() => openClubDetails(club.id)}>
+            <article
+                key={club.id}
+                className={`task task-clickable ${isDragging ? 'is-dragging' : ''}`}
+                draggable
+                onDragStart={(event) => handleDragStart(event, club.id)}
+                onDragEnd={handleDragEnd}
+                onClick={() => openClubDetails(club.id)}
+            >
                 <div className="task-header">
                     <div>
                         <div className="task-title">{club['Nazwa klubu'] || 'Bez nazwy'}</div>
@@ -1739,18 +2054,7 @@ export default function App() {
                         <p>{club.Notatka || 'Brak'}</p>
                     </div>
 
-                    <div className="detail-box">
-                        <h3>Notatka po rozmowie</h3>
-                        {isEditing ? (
-                            <textarea
-                                value={detailDraft?.callNote || ''}
-                                placeholder="Dodaj notatkę po rozmowie..."
-                                onChange={(event) => updateDetailDraftField('callNote', event.target.value)}
-                            />
-                        ) : (
-                            <p>{club.callNote || 'Brak'}</p>
-                        )}
-                    </div>
+                    {renderNoteComposer(club)}
                 </div>
             </div>
         );
@@ -1807,9 +2111,14 @@ export default function App() {
                     {node.note ? <div className="note">{node.note}</div> : null}
 
                     <h2>Co odpowiedział klient?</h2>
-                    <div className="buttons">
+                    <div className="buttons conversation-answer-buttons">
                         {node.buttons.map((button) => (
-                            <button key={button.label} type="button" className={button.tone || ''} onClick={() => goConversation(button.next)}>
+                            <button
+                                key={button.label}
+                                type="button"
+                                className={`conversation-answer-button ${button.tone ? `is-${button.tone}` : 'is-neutral'}`}
+                                onClick={() => goConversation(button.next)}
+                            >
                                 {button.label}
                             </button>
                         ))}
@@ -1854,6 +2163,13 @@ export default function App() {
                             <p className="subtle">Status zapisuje się automatycznie lokalnie, a po konfiguracji Supabase synchronizuje się też do chmury.</p>
                         </div>
                     ) : null}
+                </div>
+
+                <div className="card conversation-notes-card">
+                    <div className="step">Notatki rozmowy</div>
+                    <h2>Timeline wpisów</h2>
+                    <p className="subtle">Dodawaj notatki w dowolnym momencie rozmowy. Każdy wpis trafia do timeline tego taska.</p>
+                    {renderNoteComposer(currentClub)}
                 </div>
             </div>
         );
@@ -1947,7 +2263,13 @@ export default function App() {
 
                             <div className="board-grid">
                                 {boardColumns.map((column) => (
-                                    <section key={column.id} className="board-column">
+                                    <section
+                                        key={column.id}
+                                        className={`board-column ${dragOverColumnId === column.id ? 'is-drop-target' : ''}`}
+                                        onDragOver={(event) => handleColumnDragOver(event, column.id)}
+                                        onDragLeave={(event) => handleColumnDragLeave(event, column.id)}
+                                        onDrop={(event) => handleColumnDrop(event, column)}
+                                    >
                                         <div className="board-header">
                                             <h3>{column.title}</h3>
                                             <span className="board-count">{column.clubs.length}</span>
