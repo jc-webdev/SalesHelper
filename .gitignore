@@ -1,0 +1,16 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# local env
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store
+
+# data files (requested: do not keep CSV in repo)
+*.csv
