@@ -62,10 +62,6 @@ export default async function handler(request, response) {
         return json(response, 403, { error: 'Forbidden' });
     }
 
-    const { error: sendError } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo,
-    });
-
     const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
         type: 'recovery',
         email,
@@ -81,7 +77,7 @@ export default async function handler(request, response) {
     return json(response, 200, {
         email,
         actionLink: linkData.properties.action_link,
-        emailSent: !sendError,
-        emailError: sendError?.message || null,
+        emailSent: false,
+        emailError: 'Link wygenerowany lokalnie przez panel admina.',
     });
 }
