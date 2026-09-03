@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oqla Sales Assistant</title>
+  <style>
+    :root {
+      --blue: #2d83bd;
+      --blue-deep: #1f5d86;
+      --dark: #12202b;
+      --light: #f4f8fb;
+      --muted: #6b7b88;
+      --green: #2e9d63;
+      --red: #d9534f;
+      --amber: #d89c27;
+      --line: #dbe5ec;
+      --panel: #ffffff
+    }
+
+    * {
+      box-sizing: border-box
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, #ffffff 0, #f4f8fb 34%, #edf4f8 100%);
+      color: var(--dark)
+    }
+
+    .app {
+      max-width: 1160px;
+      margin: 0 auto;
+      min-height: 100vh;
+      padding: 24px
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px
+    }
+
+    .logo {
+      font-size: 28px;
+      font-weight: 900;
+      color: var(--blue);
+      letter-spacing: -1px
+    }
+
+    .badge {
+      font-size: 12px;
+      background: white;
+      padding: 8px 11px;
+      border-radius: 999px;
+      color: var(--muted);
+      box-shadow: 0 1px 5px #0000000d
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap: 18px;
+      align-items: start
+    }
+
+    .card {
+      background: var(--panel);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 8px 30px #17304212;
+      margin-bottom: 18px;
+      border: 1px solid #eef3f7
+    }
+
+    .card.compact {
+      padding: 18px
+    }
+
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      flex-wrap: wrap
+    }
+
+    .step {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--blue);
+      font-weight: 800;
+      margin-bottom: 10px
+    }
+
+    h1 {
+      font-size: 28px;
+      margin: 0 0 12px
+    }
+
+    h2 {
+      font-size: 18px;
+      margin: 0 0 12px
+    }
+
+    .subtle {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45
+    }
+
+    .upload-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 14px
+    }
+
+    .file-label,
+    .secondary,
+    .primary-action,
+    .chip-button,
+    .conversation-button,
+    .status-button,
+    .detail-button {
+      border: 0;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: .15s;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px
+    }
+
+    .file-label,
+    .secondary,
+    .chip-button,
+    .detail-button {
+      background: #fff;
+      border: 1px solid var(--line);
+      color: var(--muted)
+    }
+
+    .file-label input {
+      display: none
+    }
+
+    .primary-action {
+      background: var(--blue);
+      color: #fff
+    }
+
+    .primary-action:hover,
+    .chip-button:hover,
+    .detail-button:hover,
+    .conversation-button:hover,
+    .status-button:hover,
+    .secondary:hover,
+    .file-label:hover {
+      transform: translateY(-1px);
+      filter: brightness(.99)
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 18px
+    }
+
+    .summary {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px
+    }
+
+    .summary .value {
+      font-size: 26px;
+      font-weight: 900;
+      line-height: 1;
+      color: var(--blue-deep)
+    }
+
+    .summary .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px
+    }
+
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px
+    }
+
+    .task {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: 0 5px 14px #17304208
+    }
+
+    .task-header {
+      width: 100%;
+      background: transparent;
+      border: 0;
+      padding: 18px 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      text-align: left;
+      cursor: pointer
+    }
+
+    .task-header:hover {
+      background: #f7fbfd
+    }
+
+    .task.open {
+      border-color: #bfd6e6;
+      box-shadow: 0 8px 22px #17304210
+    }
+
+    .task-title {
+      font-size: 17px;
+      font-weight: 900;
+      margin-bottom: 4px
+    }
+
+    .task-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      font-size: 13px;
+      color: var(--muted)
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      background: #eef5f9;
+      color: #426071
+    }
+
+    .status-pill.green {
+      background: #eaf7ef;
+      color: #1e7a4b
+    }
+
+    .status-pill.red {
+      background: #fdecec;
+      color: #b23a35
+    }
+
+    .status-pill.amber {
+      background: #fff5de;
+      color: #a56b00
+    }
+
+    .status-pill.blue {
+      background: #e8f2f9;
+      color: #225f88
+    }
+
+    .task-body {
+      border-top: 1px solid var(--line);
+      padding: 18px
+    }
+
+    .details-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin: 14px 0 18px
+    }
+
+    .detail-box {
+      background: #f8fbfd;
+      border: 1px solid #e4edf3;
+      border-radius: 14px;
+      padding: 14px
+    }
+
+    .detail-box h3 {
+      margin: 0 0 8px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--blue)
+    }
+
+    .detail-box p {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.45
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center
+    }
+
+    .buttons {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px
+    }
+
+    button.primary {
+      background: var(--blue);
+      color: white
+    }
+
+    button.green {
+      background: var(--green);
+      color: white
+    }
+
+    button.red {
+      background: var(--red);
+      color: white
+    }
+
+    button.amber {
+      background: var(--amber);
+      color: white
+    }
+
+    .script {
+      font-size: 20px;
+      line-height: 1.55;
+      background: #f7fafc;
+      border-left: 5px solid var(--blue);
+      padding: 20px;
+      border-radius: 12px;
+      margin: 15px 0 18px
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 14px;
+      margin-top: -6px;
+      margin-bottom: 16px
+    }
+
+    .tip {
+      background: #fff8df;
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 14px;
+      margin-top: 18px
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      margin-top: 12px
+    }
+
+    .small {
+      font-size: 13px;
+      color: var(--muted)
+    }
+
+    .conversation-shell {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px
+    }
+
+    .conversation-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      flex-wrap: wrap
+    }
+
+    .conversation-context {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px
+    }
+
+    .conversation-card .script {
+      margin-bottom: 20px
+    }
+
+    .conversation-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap
+    }
+
+    .outcome-panel {
+      border-top: 1px solid var(--line);
+      padding-top: 18px;
+      margin-top: 18px;
+      display: grid;
+      gap: 12px
+    }
+
+    .textarea {
+      width: 100%;
+      min-height: 110px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      font: inherit;
+      resize: vertical;
+      background: #fff
+    }
+
+    .inline-link {
+      color: var(--blue-deep);
+      text-decoration: none;
+      font-weight: 800
+    }
+
+    .inline-link:hover {
+      text-decoration: underline
+    }
+
+    .muted {
+      color: var(--muted)
+    }
+
+    @media(max-width:900px) {
+      .layout {
+        grid-template-columns: 1fr
+      }
+
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr))
+      }
+    }
+
+    @media(max-width:600px) {
+      .app {
+        padding: 14px
+      }
+
+      .card {
+        padding: 18px
+      }
+
+      .script {
+        font-size: 18px
+      }
+
+      h1 {
+        font-size: 23px
+      }
+
+      .summary-grid {
+        grid-template-columns: 1fr
+      }
+
+      .details-grid {
+        grid-template-columns: 1fr
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <header>
+      <div class="logo">oqla</div>
+      <div class="badge">Sales Assistant</div>
+    </header>
+    <div id="root"></div>
+  </div>
+  <script>
+    const STORAGE_KEY = "oqla-sales-assistant-state-v2";
+    const SAMPLE_CSV = `Nazwa klubu,adres strony,mail kontaktowy 1,mail kontaktowy 2,Nr telefonu,Imie i nazwisko kontaktu,status,Padel double,Padel Single,Ilość kamer,Województwo,Notatka
+Interpadel Toruń,https://interpadel.pl/interpadel-torun/,paulagiminska@interpadel.pl,torun@interpadel.pl,,Paula Giminska,W trakcie negocjacji,6,2,,Kuj-Pom,
+Interpadel Bydgoszcz,https://interpadel.pl/interpadel-bydgoszcz/,cezary.babecki@interpadel.pl,,,Cezary Babecki,W trakcie negocjacji,8,2,,Kuj-Pom,
+Padel Park Bydgoszcz,https://wakeparkbydgoszcz.pl/,artur@wakeparkbydgoszcz.pl,maciej@wakeparkbydgoszcz.pl,724 699 483,Artur,Klub niezainteresowany,2,0,,Kuj-Pom,"Za drogo, klient twierdzi, że sam sobie coś takiego zainstaluje i nie jest to warte swojej ceny."
+Baza Padel Grudziądz,https://www.instagram.com/bazapadel,biuro@baza-padel.pl,,,,Wysłano ofertę,5,0,,Kuj-Pom,
+City Padel Toruń,https://www.instagram.com/citypadeltorun/,kontakt@citypadel.pl,,,,Wysłano ofertę,5,0,,Kuj-Pom,
+Rancho Padel Club,https://ranchopadelclub.pl/,kontakt@ranchpadelclub.pl,,,,Wysłano ofertę,5,0,,Kuj-Pom,
+Fast Padel Bydgoszcz,https://fasttennis.pl/,fast.bydgoszcz@gmail.com,,,,Wysłano ofertę,2,0,,Kuj-Pom,
+Padel Chojnice,https://padelchojnice.pl/,marcin@red-devils.pl,,,,Sprzedane,2,0,1,Pom,Z potencjałem na więcej
+Padel Park Pruszcz Gdański,https://www.instagram.com/padelpark.polska/,padelparkpolska@gmail.com,,,,Wysłano ofertę,6,1,,Pom,
+Itaka Padel Kościerzyna,https://www.facebook.com/p/Itaka-Padel-Ko%C5%9Bcierzyna-61575538001297/,padelkoscierzyna.itaka@gmail.com,,,,Wysłano ofertę,2,0,,Pom,
+Baltic Padel Club Gdynia,https://www.facebook.com/profile.php?id=61574830846123,bpc.rezerwacje@gmail.com,,,,Wysłano ofertę,6,1,,Pom,
+PadBox Kartuska Gdańsk,https://www.padbox.pl/,kartuska@padbox.pl,,,,Wysłano ofertę,5,0,,Pom,
+Leo Padel Trąbki Wielkie,https://www.instagram.com/leo_padel_trabki_wielkie_/,leonzaorski@tlen.pl,,,,Wysłano ofertę,2,0,,Pom,
+Inter Padel Gdynia,https://interpadel.pl/interpadel-gdynia/,gdynia@interpadel.pl,,,,W trakcie negocjacji,8,2,,Pom,
+Klub Sportowy Perła,https://klubsportowyperla.pl/,korty@tablefoods.com,,,,Wysłano ofertę,1,0,,Pom,
+Bravo Padel Gdańsk,https://www.facebook.com/profile.php?id=61559403816858&paipv=0&eav=AfYgHU_VNCFbLFXZVGUVkljB8eJ8us2hDfCOfIHzAKo7HwBq1iK6-0dexDGVw_58KU4,brawoklub@gmail.com,,,,Wysłano ofertę,2,0,,Pom,
+Sierra Golf Club,https://sierragolf.pl/,sierragolf@sierragolf.pl,,,,Todo,1,0,,Pom,
+Gdynia Padel Club,https://gdyniapadelclub.pl/,gdyniapadelclub@gmail.com,,534 044 544,,Wysłano ofertę,6,0,,Pom,
+Padel Garden Poznań,https://padelgarden.pl/,biuro@padelgarden.pl,,,,Wysłano ofertę,Do ustalenia,0,,Wielkopolskie,
+Padel Spot Poznań,https://padelspot.pl/,biuro@padelspot.pl,,500 084 321,,Wysłano ofertę,4,4,,Wielkopolskie,`;
+
+    const conversationNodes = {
+      start: { title: "Otwarcie rozmowy", script: "Dzień dobry, [IMIĘ] z Oqla. Czy rozmawiam z osobą, która zajmuje się u Państwa rozwojem klubu?", note: "Cel: szybko dotrzeć do osoby decyzyjnej.", buttons: [["Tak", "intro", "primary"], ["Nie — sekretariat", "secretary"], ["Nie teraz / nie ma czasu", "busy"]] },
+      secretary: { title: "Sekretariat / recepcja", script: "Rozumiem. Dzwonię w sprawie rozwiązania dla klubów padlowych — automatycznego nagrywania meczów i udostępniania nagrań zawodnikom. Z kim najlepiej mógłbym porozmawiać na ten temat — z właścicielem klubu czy osobą odpowiedzialną za jego rozwój?", buttons: [["Podaje osobę / przełącza", "intro", "primary"], ["Nie chce przekierować", "send"], ["Nie wiem / nie ma takiej osoby", "send"]] },
+      intro: { title: "30-sekundowe przedstawienie", script: "Super. Postaram się dosłownie w 30 sekund. Tworzymy system do automatycznego nagrywania meczów padla. Kamera na korcie nagrywa mecz, a zawodnicy mogą później dostać swoje nagranie i highlightsy bez angażowania obsługi klubu. Czy macie obecnie coś podobnego?", buttons: [["Tak, mamy rozwiązanie", "existing"], ["Nie, nie mamy", "none"], ["Nie wiem", "none"], ["Klient pyta, jak działa", "how"]] },
+      none: { title: "Brak podobnego rozwiązania", script: "Rozumiem. A czy w ogóle rozważali Państwo kiedyś takie rozwiązanie, czy to raczej temat, który do tej pory Państwa nie interesował?", buttons: [["Tak, rozważaliśmy", "demo"], ["Nie, ale brzmi ciekawie", "demo"], ["Nie, nie widzę potrzeby", "no"], ["Proszę wysłać informacje", "send"]] },
+      existing: { title: "Mają już rozwiązanie", script: "Jasne. A mogę zapytać, z czego Państwo korzystają?", buttons: [["Podaje nazwę / odpowiada", "existing2"], ["Nie chce powiedzieć", "demo"], ["Klient pyta o Oqla", "how"]] },
+      existing2: { title: "Diagnoza obecnego rozwiązania", script: "Rozumiem. I są Państwo z tego rozwiązania zadowoleni?", buttons: [["Tak, jesteśmy zadowoleni", "no"], ["Nie / są problemy", "demo"], ["Tak sobie", "demo"], ["Chce wiedzieć, czym różni się Oqla", "how"]] },
+      how: { title: "Jak działa Oqla?", script: "W skrócie — montujemy kamerę przy korcie, system cały czas nagrywa, a zawodnik może rozpocząć nagranie swojego meczu przez QR kod. Później dostaje nagranie i może je obejrzeć oraz udostępnić. Najlepiej jednak pokazać to w praktyce.", buttons: [["Umów demo", "demo", "green"], ["Pyta o cenę", "price"], ["Pyta o montaż", "installation"], ["Pyta o szczegóły", "details"]] },
+      price: { title: "Cena", script: "Przy jednym korcie jest to 300 zł miesięcznie, przy większej liczbie kortów cena za kamerę spada. Do tego dochodzi jednorazowy koszt instalacji. Mogę też pokazać dokładnie, co klub dostaje w ramach systemu.", buttons: [["OK — umów demo", "demo", "green"], ["To drogo", "expensive"], ["Proszę wysłać ofertę", "send"]] },
+      expensive: { title: "„To drogo”", script: "Rozumiem. A z czym Pan/Pani porównuje tę kwotę — z innymi systemami tego typu czy bardziej z tym, że nie wiadomo jeszcze, czy zawodnicy będą z tego korzystać?", buttons: [["Nie widzę jeszcze wartości", "demo"], ["Porównuję z innym systemem", "existing"], ["Po prostu za drogo", "no"]] },
+      installation: { title: "Montaż", script: "Instalujemy kamerę przy korcie i konfigurujemy cały system. Chodzi o to, żeby po wdrożeniu obsługa klubu nie musiała zajmować się techniczną stroną nagrywania.", buttons: [["OK — demo", "demo", "green"], ["Pyta o koszt montażu", "price"], ["Inne pytanie", "details"]] },
+      details: { title: "Szczegóły", script: "Jasne. Najlepiej będzie, jeśli pokażę to na krótkim demo — wtedy zobaczy Pan/Pani system od strony klubu i zawodnika, zamiast omawiać wszystko przez telefon.", buttons: [["Umów demo", "demo", "green"], ["Proszę wysłać maila", "send"]] },
+      demo: { title: "Umówienie demo", script: "Myślę, że warto to po prostu zobaczyć. Mogę zrobić krótkie, 15-minutowe demo online — pokażę system, jak wygląda od strony klubu i zawodnika oraz jak wygląda wdrożenie. Bardziej pasowałby Panu/Pani [DZIEŃ] czy [DZIEŃ]?", buttons: [["Tak — ustalamy termin", "success", "green"], ["Wyślij najpierw maila", "send"], ["Nie teraz", "callback"]] },
+      send: { title: "Wyślij informacje", script: "Jasne, oczywiście. Podeślę krótką informację. Na jaki adres najlepiej wysłać materiały?", buttons: [["Podaje e-mail", "followup", "green"], ["Nie chce podać", "no"]] },
+      followup: { title: "Mail + follow-up", script: "Super, wyślę dzisiaj. Żeby nie zabierać więcej czasu — pozwolę sobie wrócić do Pana/Pani w przyszłym tygodniu i zapytać, czy temat jest interesujący.", buttons: [["Ustal termin follow-up", "success", "green"], ["Kończymy rozmowę", "end"]] },
+      callback: { title: "Oddzwonić później", script: "Jasne, rozumiem. Kiedy będzie wygodniej, żebym oddzwonił — jutro czy np. w przyszłym tygodniu?", buttons: [["Ustalamy termin", "success", "green"], ["Nie chce ustalać", "end"]] },
+      busy: { title: "Klient nie ma czasu", script: "Jasne, rozumiem. Tylko jedno pytanie — czy temat automatycznego nagrywania meczów i udostępniania ich zawodnikom jest w ogóle czymś, co może być dla Państwa interesujące?", buttons: [["Tak", "demo", "green"], ["Nie", "no"], ["Oddzwonić później", "callback"]] },
+      no: { title: "Brak zainteresowania", script: "Jasne, rozumiem. Dziękuję za jasną odpowiedź i za poświęcony czas. Życzę udanego dnia, do widzenia.", buttons: [["Zakończ rozmowę", "end", "red"]] },
+      success: { title: "🎯 Cel osiągnięty", script: "Świetnie. Zapisz termin spotkania i wyślij ewentualne materiały. Na demo skup się na pokazaniu wartości dla klubu, nie na długiej prezentacji funkcji.", buttons: [["Nowa rozmowa", "start", "primary"]] },
+      end: { title: "Rozmowa zakończona", script: "Zapisz wynik rozmowy, zanim zadzwonisz do kolejnego klubu.", buttons: [["Nowa rozmowa", "start", "primary"]] }
+    };
+
+    const EXTRA_STATUSES = ["Nie wykonano połączenia", "Rozmowa się odbyła - lost", "Rozmowa się odbyła - zaplanowane spotkanie"];
+    const FINAL_NODES = new Set(["success", "no", "end"]);
+
+    const state = {
+      view: "list",
+      clubs: [],
+      selectedClubId: null,
+      activeClubId: null,
+      currentNode: "start",
+      history: []
+    };
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function slugify(value) {
+      return String(value || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || `klub-${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    function parseCsv(text) {
+      const rows = [];
+      let currentRow = [];
+      let cell = "";
+      let inQuotes = false;
+
+      for (let index = 0; index < text.length; index += 1) {
+        const character = text[index];
+        const nextCharacter = text[index + 1];
+
+        if (character === '"') {
+          if (inQuotes && nextCharacter === '"') {
+            cell += '"';
+            index += 1;
+          } else {
+            inQuotes = !inQuotes;
+          }
+          continue;
+        }
+
+        if (character === "," && !inQuotes) {
+          currentRow.push(cell);
+          cell = "";
+          continue;
+        }
+
+        if ((character === "\n" || character === "\r") && !inQuotes) {
+          if (character === "\r" && nextCharacter === "\n") {
+            index += 1;
+          }
+          currentRow.push(cell);
+          if (currentRow.some((value) => value.trim() !== "")) {
+            rows.push(currentRow);
+          }
+          currentRow = [];
+          cell = "";
+          continue;
+        }
+
+        cell += character;
+      }
+
+      if (cell.length || currentRow.length) {
+        currentRow.push(cell);
+        if (currentRow.some((value) => value.trim() !== "")) {
+          rows.push(currentRow);
+        }
+      }
+
+      if (!rows.length) {
+        return [];
+      }
+
+      const headers = rows.shift().map((header) => header.trim());
+
+      return rows.map((row, index) => {
+        const record = {};
+        headers.forEach((header, headerIndex) => {
+          record[header] = (row[headerIndex] ?? "").trim();
+        });
+        record.id = slugify(record["Nazwa klubu"] || `klub-${index + 1}-${index}`);
+        record.callStatus = record.callStatus || "";
+        record.callNote = record.callNote || "";
+        return record;
+      });
+    }
+
+    function loadStateFromStorage() {
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      if (!stored) {
+        state.clubs = parseCsv(SAMPLE_CSV);
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(stored);
+        state.view = parsed.view || "list";
+        state.selectedClubId = parsed.selectedClubId || null;
+        state.activeClubId = parsed.activeClubId || null;
+        state.currentNode = parsed.currentNode || "start";
+        state.history = Array.isArray(parsed.history) ? parsed.history : [];
+        state.clubs = Array.isArray(parsed.clubs) ? parsed.clubs : parseCsv(SAMPLE_CSV);
+      } catch (error) {
+        state.clubs = parseCsv(SAMPLE_CSV);
+      }
+    }
+
+    function persistState() {
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          view: state.view,
+          selectedClubId: state.selectedClubId,
+          activeClubId: state.activeClubId,
+          currentNode: state.currentNode,
+          history: state.history,
+          clubs: state.clubs
+        }));
+      } catch (error) {
+        // Storage can be unavailable in some file:// contexts. The app still works in-memory.
+      }
+    }
+
+    function findClub(clubId) {
+      return state.clubs.find((club) => club.id === clubId) || null;
+    }
+
+    function getCurrentClub() {
+      return findClub(state.activeClubId) || findClub(state.selectedClubId);
+    }
+
+    function getClubDisplayStatus(club) {
+      return club.callStatus || club["status"] || "Do wykonania";
+    }
+
+    function getStatusClass(status) {
+      if (!status) {
+        return "blue";
+      }
+      if (status.includes("zaplanowane spotkanie")) {
+        return "green";
+      }
+      if (status.includes("lost") || status.includes("niezainteresowany") || status.includes("Brak zainteresowania")) {
+        return "red";
+      }
+      if (status.includes("W trakcie negocjacji") || status.includes("Do ustalenia") || status.includes("Wysłano ofertę")) {
+        return "amber";
+      }
+      if (status.includes("Sprzedane")) {
+        return "green";
+      }
+      return "blue";
+    }
+
+    function safeHttpUrl(value) {
+      const rawValue = String(value || "").trim();
+      if (!rawValue) {
+        return "";
+      }
+
+      try {
+        const parsed = new URL(rawValue, window.location.href);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          return parsed.href;
+        }
+      } catch (error) {
+        return "";
+      }
+
+      return "";
+    }
+
+    function safeMailto(value) {
+      const rawValue = String(value || "").trim();
+      if (!rawValue) {
+        return "";
+      }
+      return `mailto:${encodeURIComponent(rawValue)}`;
+    }
+
+    function safeTel(value) {
+      const rawValue = String(value || "").trim();
+      if (!rawValue) {
+        return "";
+      }
+      return `tel:${rawValue.replace(/[^0-9+]/g, "")}`;
+    }
+
+    function getContactFirstName(value) {
+      const rawValue = String(value || "").trim();
+      if (!rawValue) {
+        return "Pani/Pana";
+      }
+      return rawValue.split(/\s+/)[0];
+    }
+
+    function formatConversationText(text, club) {
+      return String(text)
+        .replaceAll("[IMIĘ]", getContactFirstName(club?.["Imie i nazwisko kontaktu"]))
+        .replaceAll("[DZIEŃ]", "wybrany termin");
+    }
+
+    function uploadCsvFile(file) {
+      if (!file) {
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const content = String(reader.result || "");
+        const imported = parseCsv(content);
+        const previousByName = new Map(state.clubs.map((club) => [club["Nazwa klubu"], club]));
+
+        state.clubs = imported.map((club) => {
+          const previous = previousByName.get(club["Nazwa klubu"]);
+          return {
+            ...club,
+            callStatus: previous?.callStatus || club.callStatus || "",
+            callNote: previous?.callNote || club.callNote || ""
+          };
+        });
+
+        state.selectedClubId = state.clubs[0]?.id || null;
+        persistState();
+        render();
+      };
+      reader.readAsText(file, "utf-8");
+    }
+
+    function loadSample() {
+      state.clubs = parseCsv(SAMPLE_CSV);
+      state.selectedClubId = state.clubs[0]?.id || null;
+      persistState();
+      render();
+    }
+
+    function toggleClub(clubId) {
+      state.selectedClubId = state.selectedClubId === clubId ? null : clubId;
+      persistState();
+      render();
+    }
+
+    function startConversation(clubId) {
+      state.activeClubId = clubId;
+      state.selectedClubId = clubId;
+      state.currentNode = "start";
+      state.history = [];
+      state.view = "conversation";
+      persistState();
+      render();
+    }
+
+    function goConversation(nextNode) {
+      if (nextNode === "start") {
+        state.history = [];
+        state.currentNode = "start";
+      } else {
+        state.history.push(state.currentNode);
+        state.currentNode = nextNode;
+      }
+      persistState();
+      render();
+    }
+
+    function backConversation() {
+      if (!state.history.length) {
+        return;
+      }
+      state.currentNode = state.history.pop();
+      persistState();
+      render();
+    }
+
+    function returnToList() {
+      state.view = "list";
+      persistState();
+      render();
+    }
+
+    function setCallStatus(clubId, status) {
+      const club = findClub(clubId);
+      if (!club) {
+        return;
+      }
+      club.callStatus = status;
+      persistState();
+      render();
+    }
+
+    function saveClubNote(clubId) {
+      const noteInput = document.getElementById(`note-${clubId}`);
+      const club = findClub(clubId);
+      if (!club || !noteInput) {
+        return;
+      }
+
+      club.callNote = noteInput.value.trim();
+      persistState();
+      render();
+    }
+
+    function saveConversationOutcome(clubId, status) {
+      const noteInput = document.getElementById("conversation-note");
+      const club = findClub(clubId);
+      if (!club) {
+        return;
+      }
+
+      club.callStatus = status;
+      if (noteInput) {
+        club.callNote = noteInput.value.trim();
+      }
+      persistState();
+      render();
+    }
+
+    function renderSummary() {
+      const total = state.clubs.length;
+      const withOutcome = state.clubs.filter((club) => club.callStatus).length;
+      const withNote = state.clubs.filter((club) => club.callNote).length;
+      const toCall = state.clubs.filter((club) => !club.callStatus).length;
+
+      return `
+    <div class="summary-grid">
+      <div class="summary"><div class="value">${total}</div><div class="label">klubów w CSV</div></div>
+      <div class="summary"><div class="value">${toCall}</div><div class="label">bez dodatkowego statusu</div></div>
+      <div class="summary"><div class="value">${withOutcome}</div><div class="label">zapisanych statusów po rozmowie</div></div>
+      <div class="summary"><div class="value">${withNote}</div><div class="label">z notatką własną</div></div>
+    </div>
+  `;
+    }
+
+    function renderClubDetails(club, website, email1, email2, phone) {
+      return `
+    <div class="task-body">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;">
+        <div>
+          <div class="step">Szczegóły zadania</div>
+          <h2 style="margin:0">${escapeHtml(club["Nazwa klubu"] || "Bez nazwy")}</h2>
+        </div>
+        <div class="row">
+          ${website ? `<a class="detail-button inline-link" href="${escapeHtml(website)}" target="_blank" rel="noreferrer">↗ Strona</a>` : `<span class="muted">Brak adresu strony</span>`}
+          <button class="primary-action" type="button" onclick="startConversation('${club.id}')">Zacznij rozmowę</button>
+        </div>
+      </div>
+
+      <div class="details-grid">
+        <div class="detail-box"><h3>Mail kontaktowy 1</h3><p>${email1 ? `<a class="inline-link" href="${escapeHtml(email1)}">${escapeHtml(club["mail kontaktowy 1"] || "Brak")}</a>` : "Brak"}</p></div>
+        <div class="detail-box"><h3>Mail kontaktowy 2</h3><p>${email2 ? `<a class="inline-link" href="${escapeHtml(email2)}">${escapeHtml(club["mail kontaktowy 2"] || "Brak")}</a>` : "Brak"}</p></div>
+        <div class="detail-box"><h3>Numer telefonu</h3><p>${phone ? `<a class="inline-link" href="${escapeHtml(phone)}">${escapeHtml(club["Nr telefonu"] || "Brak")}</a>` : "Brak"}</p></div>
+        <div class="detail-box"><h3>Kontakt</h3><p>${escapeHtml(club["Imie i nazwisko kontaktu"] || "Brak")}</p></div>
+        <div class="detail-box"><h3>Status z CSV</h3><p>${escapeHtml(club["status"] || "Brak")}</p></div>
+        <div class="detail-box"><h3>Województwo</h3><p>${escapeHtml(club["Województwo"] || "Brak")}</p></div>
+        <div class="detail-box"><h3>Padel double / single</h3><p>${escapeHtml(club["Padel double"] || "0")} / ${escapeHtml(club["Padel Single"] || "0")}</p></div>
+        <div class="detail-box"><h3>Ilość kamer</h3><p>${escapeHtml(club["Ilość kamer"] || "Brak")}</p></div>
+      </div>
+
+      <div class="detail-box" style="margin-bottom:14px;">
+        <h3>Notatka z CSV</h3>
+        <p>${escapeHtml(club["Notatka"] || "Brak")}</p>
+      </div>
+
+      <div class="detail-box">
+        <h3>Twoja notatka po rozmowie</h3>
+        <textarea id="note-${club.id}" class="textarea" placeholder="Dodaj własną notatkę...">${escapeHtml(club.callNote || "")}</textarea>
+        <div class="conversation-actions" style="margin-top:10px;">
+          <button class="secondary" type="button" onclick="saveClubNote('${club.id}')">Zapisz notatkę</button>
+          ${EXTRA_STATUSES.map((status) => `<button class="status-button ${status.includes('zaplanowane spotkanie') ? 'green' : status.includes('lost') ? 'amber' : 'red'}" type="button" onclick="setCallStatus('${club.id}', ${JSON.stringify(status)})">${escapeHtml(status)}</button>`).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+    }
+
+    function renderClubCard(club) {
+      const isOpen = state.selectedClubId === club.id;
+      const website = safeHttpUrl(club["adres strony"]);
+      const email1 = safeMailto(club["mail kontaktowy 1"]);
+      const email2 = safeMailto(club["mail kontaktowy 2"]);
+      const phone = safeTel(club["Nr telefonu"]);
+      const displayStatus = getClubDisplayStatus(club);
+      const statusClass = getStatusClass(displayStatus);
+
+      return `
+    <article class="task ${isOpen ? "open" : ""}">
+      <button class="task-header" type="button" onclick="toggleClub('${club.id}')">
+        <div>
+          <div class="task-title">${escapeHtml(club["Nazwa klubu"] || "Bez nazwy")}</div>
+          <div class="task-meta">
+            <span class="status-pill ${statusClass}">${escapeHtml(displayStatus)}</span>
+            ${club.callNote ? `<span class="muted">Notatka zapisana</span>` : ""}
+          </div>
+        </div>
+        <div class="status-pill blue">${isOpen ? "Ukryj" : "Rozwiń"}</div>
+      </button>
+      ${isOpen ? renderClubDetails(club, website, email1, email2, phone) : ""}
+    </article>
+  `;
+    }
+
+    function renderListView() {
+      return `
+    <div class="layout">
+      <div>
+        <div class="card">
+          <div class="hero">
+            <div>
+              <div class="step">Lista telefonów do wykonania</div>
+              <h1>Import CSV i kontrola rozmów</h1>
+              <div class="subtle">Wgraj plik CSV z klubami, a aplikacja zamieni go na listę zadań. Każdy rekord można rozwinąć, zobaczyć dane kontaktowe, otworzyć stronę klubu, zacząć rozmowę i zapisać własną notatkę oraz status po kontakcie.</div>
+            </div>
+            <div class="upload-row">
+              <label class="file-label">Wczytaj CSV<input id="csv-upload" type="file" accept=".csv,text/csv" onchange="uploadCsvFile(this.files[0])"></label>
+              <button class="secondary" type="button" onclick="loadSample()">Załaduj próbkę</button>
+            </div>
+          </div>
+        </div>
+
+        ${renderSummary()}
+
+        <div class="list">
+          ${state.clubs.length ? state.clubs.map(renderClubCard).join("") : `<div class="card"><div class="subtle">Nie ma jeszcze żadnych rekordów. Wczytaj CSV albo użyj próbki.</div></div>`}
+        </div>
+      </div>
+
+      <div>
+        <div class="card compact">
+          <div class="step">Jak to działa</div>
+          <h2>Krótki workflow</h2>
+          <div class="subtle">
+            1. Wczytaj CSV z klubami.<br>
+            2. Rozwiń rekord i sprawdź dane.<br>
+            3. Kliknij <b>Zacznij rozmowę</b>, aby przejść do scenariusza sprzedażowego.<br>
+            4. Po rozmowie ustaw status i dopisz własną notatkę.
+          </div>
+        </div>
+
+        <div class="card compact">
+          <div class="step">Dostępne kolumny</div>
+          <div class="conversation-context">
+            <span class="status-pill blue">Nazwa klubu</span>
+            <span class="status-pill blue">Adres strony</span>
+            <span class="status-pill blue">Maile kontaktowe</span>
+            <span class="status-pill blue">Numer telefonu</span>
+            <span class="status-pill blue">Kontakt</span>
+            <span class="status-pill blue">Status</span>
+            <span class="status-pill blue">Padel double</span>
+            <span class="status-pill blue">Padel Single</span>
+            <span class="status-pill blue">Ilość kamer</span>
+            <span class="status-pill blue">Województwo</span>
+            <span class="status-pill blue">Notatka</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+    }
+
+    function renderConversationView() {
+      const club = getCurrentClub();
+      const node = conversationNodes[state.currentNode];
+
+      if (!club) {
+        return `
+      <div class="card">
+        <div class="step">Scenariusz rozmowy</div>
+        <h1>Brak wybranego klubu</h1>
+        <div class="subtle">Wróć do listy i wybierz zadanie, żeby rozpocząć rozmowę.</div>
+        <div class="upload-row" style="margin-top:16px;">
+          <button class="primary-action" type="button" onclick="returnToList()">Wróć do listy</button>
+        </div>
+      </div>
+    `;
+      }
+
+      const path = state.history.length ? `Ścieżka: ${state.history.map((nodeId) => conversationNodes[nodeId].title).join(" → ")}` : "Nowa rozmowa";
+      const isFinal = FINAL_NODES.has(state.currentNode);
+      const personalizedScript = formatConversationText(node.script, club);
+
+      return `
+    <div class="conversation-shell">
+      <div class="card conversation-card">
+        <div class="conversation-top">
+          <div>
+            <div class="step">Scenariusz rozmowy</div>
+            <h1>${escapeHtml(node.title)}</h1>
+            <div class="subtle">${escapeHtml(path)}</div>
+            <div class="conversation-context">
+              <span class="status-pill ${getStatusClass(getClubDisplayStatus(club))}">${escapeHtml(club["Nazwa klubu"] || "Bez nazwy")}</span>
+              <span class="status-pill blue">${escapeHtml(getClubDisplayStatus(club))}</span>
+              ${club["Imie i nazwisko kontaktu"] ? `<span class="status-pill blue">${escapeHtml(club["Imie i nazwisko kontaktu"])} </span>` : ""}
+            </div>
+          </div>
+          <div class="conversation-actions">
+            <button class="secondary" type="button" onclick="returnToList()">← Wróć do listy</button>
+            <button class="secondary" type="button" onclick="backConversation()">Wstecz</button>
+            <button class="secondary" type="button" onclick="goConversation('start')">Nowa rozmowa</button>
+          </div>
+        </div>
+
+        <div class="script">${escapeHtml(personalizedScript)}</div>
+        ${node.note ? `<div class="note">${escapeHtml(node.note)}</div>` : ""}
+
+        <h2>Co odpowiedział klient?</h2>
+        <div class="buttons">
+          ${node.buttons.map((button) => `<button class="${button[2] || ""}" type="button" onclick="goConversation('${button[1]}')">${escapeHtml(button[0])}</button>`).join("")}
+        </div>
+
+        ${["intro", "none", "existing", "how"].includes(state.currentNode) ? `<div class="tip">Wskazówka: po zadaniu pytania nie mów dalej. Pozwól klientowi odpowiedzieć i wybierz jego odpowiedź powyżej.</div>` : ""}
+
+        ${isFinal ? `
+          <div class="outcome-panel">
+            <div class="step">Zapis po rozmowie</div>
+            <h2 style="margin:0">Dodaj status i notatkę</h2>
+            <textarea id="conversation-note" class="textarea" placeholder="Dodaj własną notatkę po rozmowie...">${escapeHtml(club.callNote || "")}</textarea>
+            <div class="conversation-actions">
+              ${EXTRA_STATUSES.map((status) => `<button class="status-button ${status.includes('zaplanowane spotkanie') ? 'green' : status.includes('lost') ? 'amber' : 'red'}" type="button" onclick="saveConversationOutcome('${club.id}', ${JSON.stringify(status)})">${escapeHtml(status)}</button>`).join("")}
+            </div>
+            <div class="subtle">Wybór statusu zapisze go razem z notatką do tego klubu.</div>
+          </div>
+        ` : ""}
+      </div>
+    </div>
+  `;
+    }
+
+    function render() {
+      document.getElementById("root").innerHTML = state.view === "conversation" ? renderConversationView() : renderListView();
+    }
+
+    loadStateFromStorage();
+    if (!state.clubs.length) {
+      state.clubs = parseCsv(SAMPLE_CSV);
+    }
+    if (!state.selectedClubId && state.clubs[0]) {
+      state.selectedClubId = state.clubs[0].id;
+    }
+    render();
+  </script>
+</body>
+
+</html>
