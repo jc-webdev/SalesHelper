@@ -326,6 +326,14 @@ function createNoteId() {
     return `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function createMeetingId() {
+    if (globalThis.crypto?.randomUUID) {
+        return globalThis.crypto.randomUUID();
+    }
+
+    return `meeting-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function normalizeTimelineNotes(notes, fallbackText = '', fallbackCreatedAt = '') {
     if (Array.isArray(notes)) {
         return notes
@@ -364,6 +372,76 @@ function normalizeTimelineNotes(notes, fallbackText = '', fallbackCreatedAt = ''
         text,
         createdAt: fallbackCreatedAt || new Date().toISOString(),
     }];
+}
+
+function normalizeScheduledMeetings(meetings) {
+    if (!Array.isArray(meetings)) {
+        return [];
+    }
+
+    return meetings
+        .map((meeting, index) => {
+            if (typeof meeting === 'string') {
+                const text = meeting.trim();
+                return text ? {
+                    id: `legacy-meeting-${index}-${text.slice(0, 12)}`,
+                    title: text,
+                    startsAt: '',
+                    notes: '',
+                    createdAt: new Date().toISOString(),
+                } : null;
+            }
+
+            const startsAt = String(meeting?.startsAt || meeting?.scheduledAt || meeting?.dateTime || '').trim();
+            const title = String(meeting?.title || meeting?.name || '').trim();
+            if (!startsAt && !title) {
+                return null;
+            }
+
+            return {
+                id: meeting?.id || createMeetingId(),
+                title: title || 'Spotkanie',
+                startsAt,
+                notes: String(meeting?.notes || '').trim(),
+                createdAt: meeting?.createdAt || meeting?.created_at || new Date().toISOString(),
+                durationMinutes: Number(meeting?.durationMinutes || meeting?.duration || 30) || 30,
+                clubId: meeting?.clubId || '',
+                clubName: meeting?.clubName || '',
+            contactName: meeting?.contactName || '',
+            createdBy: meeting?.createdBy || meeting?.created_by || '',
+            createdByName: meeting?.createdByName || meeting?.created_by_name || '',
+            createdByEmail: meeting?.createdByEmail || meeting?.created_by_email || '',
+        };
+    })
+    .filter(Boolean);
+}
+
+function localDateTimeToIso(date, time) {
+    const cleanDate = String(date || '').trim();
+    const cleanTime = String(time || '').trim();
+    if (!cleanDate || !cleanTime) {
+        return '';
+    }
+
+    const localDate = new Date(`${cleanDate}T${cleanTime}:00`);
+    if (Number.isNaN(localDate.getTime())) {
+        return '';
+    }
+
+    return localDate.toISOString();
+}
+
+function isoToLocalDateTimeParts(isoValue) {
+    const parsed = new Date(isoValue);
+    if (Number.isNaN(parsed.getTime())) {
+        return { date: '', time: '' };
+    }
+
+    const pad = (value) => String(value).padStart(2, '0');
+    return {
+        date: `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`,
+        time: `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`,
+    };
 }
 
 function normalizeText(value) {
@@ -423,6 +501,7 @@ function buildImportPlan(importedClubs, existingClubs) {
                 callStatus: DEFAULT_STATUS,
                 callNote: '',
                 notesTimeline: [],
+                scheduledMeetings: [],
             });
             return;
         }
@@ -506,6 +585,7 @@ function normalizeLoadedClubs(clubs) {
         callStatus: club.callStatus || DEFAULT_STATUS,
         callNote: club.callNote || '',
         notesTimeline: normalizeTimelineNotes(club.notesTimeline, club.callNote, club.updatedAt || club.updated_at || ''),
+        scheduledMeetings: normalizeScheduledMeetings(club.scheduledMeetings || club.meetings || []),
     }));
 }
 
@@ -528,6 +608,7 @@ function mapSupabaseRowToClub(row) {
         row.call_note || payload.callNote || '',
         row.updated_at || payload.updatedAt || ''
     );
+    const scheduledMeetings = normalizeScheduledMeetings(payload.scheduledMeetings || payload.meetings || []);
 
     return {
         ...payload,
@@ -538,6 +619,7 @@ function mapSupabaseRowToClub(row) {
         callStatus: row.call_status || payload.callStatus || DEFAULT_STATUS,
         callNote: row.call_note || payload.callNote || '',
         notesTimeline,
+        scheduledMeetings,
     };
 }
 
@@ -657,6 +739,7 @@ function parseCsv(text) {
         record.callStatus = DEFAULT_STATUS;
         record.callNote = '';
         record.notesTimeline = [];
+        record.scheduledMeetings = [];
         return record;
     });
 }
@@ -667,6 +750,7 @@ function normalizeClub(record, existingRecord) {
         callStatus: existingRecord?.callStatus || record.callStatus || DEFAULT_STATUS,
         callNote: existingRecord?.callNote || record.callNote || '',
         notesTimeline: existingRecord?.notesTimeline || record.notesTimeline || [],
+        scheduledMeetings: existingRecord?.scheduledMeetings || record.scheduledMeetings || [],
     };
 }
 
@@ -743,6 +827,8 @@ export default function App() {
     const [adminForm, setAdminForm] = useState({ fullName: '', email: '' });
     const [adminMessage, setAdminMessage] = useState('');
     const [adminResetLink, setAdminResetLink] = useState(null);
+    const [editingMemberId, setEditingMemberId] = useState(null);
+    const [memberNameDraft, setMemberNameDraft] = useState('');
     const [activePanel, setActivePanel] = useState('board');
     const [isDetailEditing, setIsDetailEditing] = useState(false);
     const [detailDraft, setDetailDraft] = useState(null);
@@ -758,6 +844,14 @@ export default function App() {
     const [dragOverColumnId, setDragOverColumnId] = useState(null);
     const [isNoteComposerOpen, setIsNoteComposerOpen] = useState(false);
     const [noteDraft, setNoteDraft] = useState('');
+    const [meetingDraft, setMeetingDraft] = useState({ date: '', time: '', title: '', notes: '' });
+    const [calendarWeekStart, setCalendarWeekStart] = useState(() => getStartOfWeek(new Date()));
+    const [calendarInitialized, setCalendarInitialized] = useState(false);
+    const [selectedCalendarDay, setSelectedCalendarDay] = useState(null);
+    const [editingMeetingId, setEditingMeetingId] = useState(null);
+    const [pendingMeetingDelete, setPendingMeetingDelete] = useState(null);
+    const [meetingEditDraft, setMeetingEditDraft] = useState({ date: '', time: '', title: '', notes: '' });
+    const meetingsCarouselRef = useRef(null);
     const detailStatusSelectRef = useRef(null);
 
     useEffect(() => {
@@ -821,6 +915,9 @@ export default function App() {
                 setSharedMemos([]);
                 setIsMemoComposerOpen(false);
                 setMemoDraft('');
+                setCalendarInitialized(false);
+                setCalendarWeekStart(getStartOfWeek(new Date()));
+                resetMeetingDraft(null);
                 return;
             }
 
@@ -1001,6 +1098,41 @@ export default function App() {
         return columns;
     }, [state.clubs]);
 
+    const upcomingMeetings = useMemo(() => {
+        const now = Date.now();
+        return state.clubs
+            .flatMap((club) => (Array.isArray(club.scheduledMeetings) ? club.scheduledMeetings.map((meeting) => ({
+                ...meeting,
+                clubId: club.id,
+                clubName: club['Nazwa klubu'] || meeting.clubName || 'Klub',
+                contactName: club['Imie i nazwisko kontaktu'] || [club['mail kontaktowy 1'], club['mail kontaktowy 2']]
+                    .map((value) => String(value || '').trim()).find(Boolean) || '',
+                callStatus: club.callStatus || DEFAULT_STATUS,
+            })) : []))
+            .filter((meeting) => meeting.startsAt && new Date(meeting.startsAt).getTime() >= now - (60 * 60 * 1000))
+            .sort((left, right) => new Date(left.startsAt) - new Date(right.startsAt))
+            .slice(0, 8);
+    }, [state.clubs]);
+
+    useEffect(() => {
+        if (!upcomingMeetings.length) {
+            setSelectedCalendarDay(null);
+            setCalendarInitialized(false);
+            return;
+        }
+
+        if (calendarInitialized) {
+            return;
+        }
+
+        const nearestMeetingDate = new Date(upcomingMeetings[0].startsAt);
+        const nearestWeekStart = getStartOfWeek(nearestMeetingDate);
+
+        setCalendarWeekStart(nearestWeekStart);
+        setSelectedCalendarDay(null);
+        setCalendarInitialized(true);
+    }, [calendarInitialized, upcomingMeetings]);
+
     function persistPatch(clubId, patch) {
         setState((currentState) => ({
             ...currentState,
@@ -1008,15 +1140,28 @@ export default function App() {
         }));
     }
 
+    function resetMeetingDraft(club = null) {
+        const firstUpcomingMeeting = Array.isArray(club?.scheduledMeetings)
+            ? club.scheduledMeetings.find((meeting) => meeting?.startsAt)
+            : null;
+        const defaultStartsAt = firstUpcomingMeeting?.startsAt ? isoToLocalDateTimeParts(firstUpcomingMeeting.startsAt) : { date: '', time: '' };
+
+        setMeetingDraft({
+            date: defaultStartsAt.date,
+            time: defaultStartsAt.time,
+            title: club ? `Spotkanie - ${club['Nazwa klubu'] || 'klub'}` : '',
+            notes: '',
+        });
+    }
+
     function openClubDetails(clubId) {
         setState((currentState) => ({
             ...currentState,
+            view: 'list',
             selectedClubId: clubId,
         }));
         setIsDetailEditing(false);
         setDetailDraft(null);
-        setIsNoteComposerOpen(false);
-        setNoteDraft('');
     }
 
     function closeClubDetails() {
@@ -1028,6 +1173,7 @@ export default function App() {
         setDetailDraft(null);
         setIsNoteComposerOpen(false);
         setNoteDraft('');
+        resetMeetingDraft(null);
     }
 
     function loadSample() {
@@ -1093,9 +1239,15 @@ export default function App() {
             currentNode: 'start',
             history: [],
         }));
+        resetMeetingDraft(state.clubs.find((club) => club.id === clubId) || null);
     }
 
     function goConversation(nextNode) {
+        if (nextNode === 'success' && currentClub && currentClub.callStatus !== STATUS_MEETING) {
+            updateClubStatus(currentClub.id, STATUS_MEETING);
+            resetMeetingDraft(currentClub);
+        }
+
         setState((currentState) => {
             if (nextNode === 'start') {
                 return { ...currentState, currentNode: 'start', history: [] };
@@ -1138,6 +1290,203 @@ export default function App() {
 
     function updateClubNote(clubId, callNote) {
         persistPatch(clubId, { callNote });
+    }
+
+    function addMeetingToClub(clubId, draft) {
+        const title = String(draft?.title || '').trim() || 'Spotkanie';
+        const startsAt = localDateTimeToIso(draft?.date, draft?.time);
+        const notes = String(draft?.notes || '').trim();
+
+        if (!clubId || !startsAt) {
+            return;
+        }
+
+        const club = state.clubs.find((item) => item.id === clubId);
+        if (!club) {
+            return;
+        }
+
+        const fallbackContact = [club['mail kontaktowy 1'], club['mail kontaktowy 2']]
+            .map((value) => String(value || '').trim())
+            .find(Boolean) || 'Brak kontaktu';
+        const createdByName = getCurrentUserDisplayName();
+
+        const nextMeetings = [
+            ...(Array.isArray(club.scheduledMeetings) ? club.scheduledMeetings : []),
+            {
+                id: createMeetingId(),
+                title,
+                startsAt,
+                notes,
+                createdAt: new Date().toISOString(),
+                durationMinutes: 30,
+                clubId,
+                clubName: club['Nazwa klubu'] || title,
+                contactName: club['Imie i nazwisko kontaktu'] || fallbackContact,
+                createdBy: session?.user?.id || '',
+                createdByName,
+                createdByEmail: session?.user?.email || '',
+            },
+        ];
+
+        persistPatch(clubId, {
+            callStatus: STATUS_MEETING,
+            scheduledMeetings: nextMeetings,
+        });
+        setMeetingDraft({
+            date: '',
+            time: '',
+            title: `Spotkanie - ${club['Nazwa klubu'] || 'klub'}`,
+            notes: '',
+        });
+    }
+
+    function canManageMeeting(meeting) {
+        if (!meeting) {
+            return false;
+        }
+
+        if (userProfile?.is_admin) {
+            return true;
+        }
+
+        if (!session?.user) {
+            return false;
+        }
+
+        const createdById = String(meeting.createdBy || '').trim();
+        const createdByEmail = String(meeting.createdByEmail || '').trim();
+        const currentUserId = String(session.user.id || '').trim();
+        const currentUserEmail = String(session.user.email || '').trim();
+
+        if (createdById && currentUserId && createdById === currentUserId) {
+            return true;
+        }
+
+        if (createdByEmail && currentUserEmail && createdByEmail.toLowerCase() === currentUserEmail.toLowerCase()) {
+            return true;
+        }
+
+        return false;
+    }
+
+    function getCurrentUserDisplayName() {
+        const sessionFullName = String(session?.user?.user_metadata?.full_name || session?.user?.raw_user_meta_data?.full_name || '').trim();
+        if (sessionFullName) {
+            return sessionFullName;
+        }
+
+        const profileFullName = String(userProfile?.full_name || '').trim();
+        if (profileFullName) {
+            return profileFullName;
+        }
+
+        const sessionEmail = String(session?.user?.email || '').trim();
+        if (sessionEmail) {
+            return sessionEmail;
+        }
+
+        return 'Użytkownik';
+    }
+
+    function getMeetingCreatorLabel(meeting) {
+        const creatorName = String(meeting?.createdByName || '').trim();
+        if (creatorName) {
+            return `Ustawił: ${creatorName}`;
+        }
+
+        const creatorEmail = String(meeting?.createdByEmail || '').trim();
+        if (creatorEmail) {
+            return `Ustawił: ${creatorEmail}`;
+        }
+
+        const currentUserName = getCurrentUserDisplayName();
+        if (session?.user && userProfile && (meeting?.createdBy === session.user.id || meeting?.createdByEmail === session.user.email)) {
+            return `Ustawił: ${currentUserName}`;
+        }
+
+        if (session?.user && userProfile?.id === session.user.id) {
+            return `Ustawił: ${currentUserName}`;
+        }
+
+        return 'Ustawił: użytkownik';
+    }
+
+    function beginMeetingEdit(club, meeting) {
+        if (!club || !meeting) {
+            return;
+        }
+
+        const dateTime = meeting.startsAt ? isoToLocalDateTimeParts(meeting.startsAt) : { date: '', time: '' };
+        setEditingMeetingId(meeting.id);
+        setMeetingEditDraft({
+            date: dateTime.date,
+            time: dateTime.time,
+            title: meeting.title || `Spotkanie - ${club['Nazwa klubu'] || 'klub'}`,
+            notes: meeting.notes || '',
+        });
+    }
+
+    function saveMeetingEdit(clubId) {
+        if (!clubId || !editingMeetingId) {
+            return;
+        }
+
+        const nextStartsAt = localDateTimeToIso(meetingEditDraft.date, meetingEditDraft.time);
+        if (!nextStartsAt) {
+            return;
+        }
+
+        setState((currentState) => ({
+            ...currentState,
+            clubs: currentState.clubs.map((club) => {
+                if (club.id !== clubId) {
+                    return club;
+                }
+
+                return {
+                    ...club,
+                    scheduledMeetings: (Array.isArray(club.scheduledMeetings) ? club.scheduledMeetings : []).map((meeting) => (
+                        meeting.id === editingMeetingId
+                            ? {
+                                ...meeting,
+                                title: String(meetingEditDraft.title || '').trim() || 'Spotkanie',
+                                startsAt: nextStartsAt,
+                                notes: String(meetingEditDraft.notes || '').trim(),
+                                updatedAt: new Date().toISOString(),
+                            }
+                            : meeting
+                    )),
+                };
+            }),
+        }));
+        setEditingMeetingId(null);
+        setMeetingEditDraft({ date: '', time: '', title: '', notes: '' });
+    }
+
+    function deleteMeetingFromClub(clubId, meetingId) {
+        if (!clubId || !meetingId) {
+            return;
+        }
+
+        setState((currentState) => ({
+            ...currentState,
+            clubs: currentState.clubs.map((club) => {
+                if (club.id !== clubId) {
+                    return club;
+                }
+
+                return {
+                    ...club,
+                    scheduledMeetings: (Array.isArray(club.scheduledMeetings) ? club.scheduledMeetings : []).filter((meeting) => meeting.id !== meetingId),
+                };
+            }),
+        }));
+        if (editingMeetingId === meetingId) {
+            setEditingMeetingId(null);
+            setMeetingEditDraft({ date: '', time: '', title: '', notes: '' });
+        }
+        setPendingMeetingDelete(null);
     }
 
     function addTaskNote(noteText) {
@@ -1210,10 +1559,13 @@ export default function App() {
         setSharedMemos([]);
         setIsMemoComposerOpen(false);
         setMemoDraft('');
+        resetMeetingDraft(null);
         setAuthMode('login');
         setResetPasswordForm({ password: '', confirmPassword: '' });
         setResetPasswordError('');
         setResetPasswordMessage('');
+        setCalendarInitialized(false);
+        setCalendarWeekStart(getStartOfWeek(new Date()));
     }
 
     async function refreshTeamMembers(accessToken = session?.access_token, isAdmin = userProfile?.is_admin) {
@@ -1328,6 +1680,38 @@ export default function App() {
         setAdminMessage(`Utworzono konto dla ${payload.email}. Tymczasowe hasło: ${payload.password}`);
         setAdminForm({ fullName: '', email: '' });
         setAdminResetLink(null);
+        await refreshTeamMembers();
+    }
+
+    async function handleUpdateTeamMemberName(memberId, nextFullName) {
+        if (!supabase || !userProfile?.is_admin) {
+            return;
+        }
+
+        const trimmed = String(nextFullName || '').trim();
+        if (!memberId || !trimmed) {
+            setAdminMessage('Imię i nazwisko nie może być puste.');
+            return;
+        }
+
+        const { error } = await supabase
+            .from('profiles')
+            .update({ full_name: trimmed, updated_at: new Date().toISOString() })
+            .eq('id', memberId);
+
+        if (error) {
+            setAdminMessage('Nie udało się zaktualizować imienia i nazwiska.');
+            return;
+        }
+
+        setEditingMemberId(null);
+        setMemberNameDraft('');
+        setAdminMessage('Zaktualizowano imię i nazwisko użytkownika.');
+
+        if (memberId === session?.user?.id) {
+            setUserProfile((current) => current ? { ...current, full_name: trimmed } : current);
+        }
+
         await refreshTeamMembers();
     }
 
@@ -1576,26 +1960,82 @@ export default function App() {
                     <div className="detail-box">
                         <h3>Członkowie zespołu</h3>
                         <div className="team-list">
-                            {teamMembers.length ? teamMembers.map((member) => (
-                                <div key={member.id} className="team-member-row">
-                                    <div>
-                                        <div className="team-member-name">{member.full_name || member.email}</div>
-                                        <div className="team-member-email">{member.email}</div>
+                            {teamMembers.length ? teamMembers.map((member) => {
+                                const isEditingMember = editingMemberId === member.id;
+
+                                return (
+                                    <div key={member.id} className="team-member-row">
+                                        <div>
+                                            {isEditingMember ? (
+                                                <label className="field-group compact-field-group">
+                                                    <span>Imię i nazwisko</span>
+                                                    <input
+                                                        type="text"
+                                                        value={memberNameDraft}
+                                                        onChange={(event) => setMemberNameDraft(event.target.value)}
+                                                        placeholder="Jan Kowalski"
+                                                    />
+                                                </label>
+                                            ) : (
+                                                <>
+                                                    <div className="team-member-name">{member.full_name || member.email}</div>
+                                                    <div className="team-member-email">{member.email}</div>
+                                                </>
+                                            )}
+                                        </div>
+                                        <div className="team-member-actions">
+                                            <span className={`status-pill ${member.is_admin ? 'green' : 'blue'}`}>
+                                                {member.is_admin ? 'Admin' : 'Członek zespołu'}
+                                            </span>
+                                            {isEditingMember ? (
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        className="icon-button"
+                                                        aria-label="Zapisz imię i nazwisko"
+                                                        title="Zapisz imię i nazwisko"
+                                                        onClick={() => handleUpdateTeamMemberName(member.id, memberNameDraft)}
+                                                    >
+                                                        ✓
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="icon-button"
+                                                        aria-label="Anuluj edycję"
+                                                        title="Anuluj edycję"
+                                                        onClick={() => {
+                                                            setEditingMemberId(null);
+                                                            setMemberNameDraft('');
+                                                        }}
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    className="icon-button"
+                                                    aria-label="Edytuj imię i nazwisko"
+                                                    title="Edytuj imię i nazwisko"
+                                                    onClick={() => {
+                                                        setEditingMemberId(member.id);
+                                                        setMemberNameDraft(member.full_name || member.email || '');
+                                                    }}
+                                                >
+                                                    ✎
+                                                </button>
+                                            )}
+                                            <button
+                                                type="button"
+                                                className="secondary team-reset-button"
+                                                onClick={() => handleSendPasswordReset(member.email)}
+                                            >
+                                                Wyślij link/reset hasła
+                                            </button>
+                                        </div>
                                     </div>
-                                    <div className="team-member-actions">
-                                        <span className={`status-pill ${member.is_admin ? 'green' : 'blue'}`}>
-                                            {member.is_admin ? 'Admin' : 'Członek zespołu'}
-                                        </span>
-                                        <button
-                                            type="button"
-                                            className="secondary team-reset-button"
-                                            onClick={() => handleSendPasswordReset(member.email)}
-                                        >
-                                            Wyślij link/reset hasła
-                                        </button>
-                                    </div>
-                                </div>
-                            )) : <p className="subtle">Brak użytkowników do wyświetlenia.</p>}
+                                );
+                            }) : <p className="subtle">Brak użytkowników do wyświetlenia.</p>}
                         </div>
                     </div>
                 </div>
@@ -1735,6 +2175,11 @@ export default function App() {
         }
 
         updateClubStatus(currentClub.id, callStatus);
+        if (callStatus === STATUS_MEETING) {
+            resetMeetingDraft(currentClub);
+        } else {
+            setMeetingDraft({ date: '', time: '', title: '', notes: '' });
+        }
     }
 
     function openTaskNoteComposer() {
@@ -1816,6 +2261,570 @@ export default function App() {
                             <p>{note.text}</p>
                         </div>
                     ))}
+            </div>
+        );
+    }
+
+    function formatMeetingWhen(startsAt) {
+        if (!startsAt) {
+            return 'Bez terminu';
+        }
+
+        const parsed = new Date(startsAt);
+        if (Number.isNaN(parsed.getTime())) {
+            return 'Bez terminu';
+        }
+
+        return parsed.toLocaleString('pl-PL', {
+            day: '2-digit',
+            month: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    }
+
+    function getStartOfWeek(date) {
+        const nextDate = new Date(date);
+        nextDate.setHours(0, 0, 0, 0);
+        const dayIndex = nextDate.getDay();
+        const diff = dayIndex === 0 ? -6 : 1 - dayIndex;
+        nextDate.setDate(nextDate.getDate() + diff);
+        return nextDate;
+    }
+
+    function addDays(date, count) {
+        const nextDate = new Date(date);
+        nextDate.setDate(nextDate.getDate() + count);
+        return nextDate;
+    }
+
+    function formatLocalDateKey(date) {
+        const pad = (value) => String(value).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    }
+
+    function formatCalendarDayLabel(date) {
+        return new Intl.DateTimeFormat('pl-PL', { day: 'numeric' }).format(date);
+    }
+
+    function scrollMeetingCarousel(direction) {
+        const carousel = meetingsCarouselRef.current;
+        if (!carousel) {
+            return;
+        }
+
+        const firstCard = carousel.querySelector('.meeting-strip-card');
+        const gap = 12;
+        const scrollAmount = firstCard ? firstCard.getBoundingClientRect().width + gap : 280;
+        carousel.scrollBy({ left: scrollAmount * direction, behavior: 'smooth' });
+    }
+
+    function handleCarouselPointerDown(event) {
+        const carousel = meetingsCarouselRef.current;
+        if (!carousel) {
+            return;
+        }
+
+        carousel.setPointerCapture?.(event.pointerId);
+        carousel.classList.add('is-dragging');
+        carousel.dataset.dragging = 'true';
+        carousel.dataset.startX = String(event.clientX);
+        carousel.dataset.scrollLeft = String(carousel.scrollLeft);
+    }
+
+    function handleCarouselPointerMove(event) {
+        const carousel = meetingsCarouselRef.current;
+        if (!carousel || carousel.dataset.dragging !== 'true') {
+            return;
+        }
+
+        const startX = Number(carousel.dataset.startX || event.clientX);
+        const delta = event.clientX - startX;
+        carousel.scrollLeft = Number(carousel.dataset.scrollLeft || 0) - delta;
+    }
+
+    function handleCarouselPointerUp(event) {
+        const carousel = meetingsCarouselRef.current;
+        if (!carousel) {
+            return;
+        }
+
+        carousel.classList.remove('is-dragging');
+        carousel.dataset.dragging = 'false';
+        if (event.pointerId !== undefined) {
+            carousel.releasePointerCapture?.(event.pointerId);
+        }
+    }
+
+    function renderUpcomingMeetingsStrip(meetings) {
+        if (!meetings.length) {
+            return (
+                <div className="meeting-strip-empty">
+                    Brak zaplanowanych spotkań. Gdy ustawisz termin w rozmowie, pojawi się tutaj.
+                </div>
+            );
+        }
+
+        return (
+            <div className="meeting-strip-wrapper">
+                <button
+                    type="button"
+                    className="secondary calendar-nav-button meeting-strip-arrow"
+                    aria-label="Poprzedni termin"
+                    onClick={() => scrollMeetingCarousel(-1)}
+                >
+                    ←
+                </button>
+
+                <div
+                    ref={meetingsCarouselRef}
+                    className="meeting-strip"
+                    aria-label="Najbliższe spotkania"
+                    onPointerDown={handleCarouselPointerDown}
+                    onPointerMove={handleCarouselPointerMove}
+                    onPointerUp={handleCarouselPointerUp}
+                    onPointerLeave={handleCarouselPointerUp}
+                    onPointerCancel={handleCarouselPointerUp}
+                >
+                    {meetings.map((meeting) => (
+                        <article key={meeting.id} className="meeting-strip-card">
+                            <div className="meeting-strip-card-top">
+                                <span className="status-pill green">Spotkanie</span>
+                                <span className="meeting-strip-time">{formatMeetingWhen(meeting.startsAt)}</span>
+                            </div>
+                            <h3>{meeting.clubName}</h3>
+                            <p>{meeting.title}</p>
+                            <div className="meeting-strip-meta">
+                                <span>{meeting.contactName || 'Brak kontaktu'}</span>
+                                <span>{getMeetingCreatorLabel(meeting)}</span>
+                                <span>{meeting.notes || 'Bez dodatkowych notatek'}</span>
+                            </div>
+                            <div className="meeting-strip-actions">
+                                <button
+                                    type="button"
+                                    className="icon-button"
+                                    aria-label="Otwórz szczegóły zadania"
+                                    title="Otwórz szczegóły zadania"
+                                    onPointerDown={(e) => {
+                                        e.stopPropagation();
+                                    }}
+                                    onPointerUp={(e) => {
+                                        e.stopPropagation();
+                                    }}
+                                    onClick={() => {
+                                        openClubDetails(meeting.clubId);
+                                    }}
+                                >
+                                    →
+                                </button>
+                            </div>
+                        </article>
+                    ))}
+                </div>
+
+                <button
+                    type="button"
+                    className="secondary calendar-nav-button meeting-strip-arrow"
+                    aria-label="Następny termin"
+                    onClick={() => scrollMeetingCarousel(1)}
+                >
+                    →
+                </button>
+            </div>
+        );
+    }
+
+    function renderMeetingCalendarPanel(meetings) {
+        const weekDates = Array.from({ length: 7 }, (_, index) => addDays(getStartOfWeek(calendarWeekStart), index));
+        const meetingsByDay = new Map();
+
+        meetings.forEach((meeting) => {
+            if (!meeting.startsAt) {
+                return;
+            }
+
+            const meetingDate = new Date(meeting.startsAt);
+            const key = formatLocalDateKey(meetingDate);
+            const existing = meetingsByDay.get(key) || [];
+            existing.push(meeting);
+            meetingsByDay.set(key, existing);
+        });
+
+        const selectedDayMeetings = selectedCalendarDay ? meetingsByDay.get(selectedCalendarDay) || [] : [];
+        const weekLabel = new Intl.DateTimeFormat('pl-PL', {
+            month: 'long',
+            year: 'numeric',
+        }).format(weekDates[0]);
+
+        return (
+            <div className="card compact calendar-card">
+                <div className="memo-card-top calendar-header">
+                    <div>
+                        <div className="step">Kalendarz</div>
+                        <h2>Spotkania</h2>
+                    </div>
+                    <div className="calendar-nav">
+                        <button
+                            type="button"
+                            className="secondary calendar-nav-button"
+                            onClick={() => {
+                                setCalendarWeekStart((current) => addDays(current, -7));
+                                setSelectedCalendarDay(null);
+                            }}
+                            aria-label="Poprzedni tydzień"
+                        >
+                            ←
+                        </button>
+                        <span className="calendar-week-label">{weekLabel}</span>
+                        <button
+                            type="button"
+                            className="secondary calendar-nav-button"
+                            onClick={() => {
+                                setCalendarWeekStart((current) => addDays(current, 7));
+                                setSelectedCalendarDay(null);
+                            }}
+                            aria-label="Następny tydzień"
+                        >
+                            →
+                        </button>
+                    </div>
+                </div>
+
+                <div className="calendar-week-grid" role="grid" aria-label="Kalendarz tygodniowy spotkań">
+                    {['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb', 'Nd'].map((label) => (
+                        <div key={label} className="calendar-day-header">{label}</div>
+                    ))}
+
+                    {weekDates.map((date) => {
+                        const key = formatLocalDateKey(date);
+                        const dayMeetings = meetingsByDay.get(key) || [];
+                        const isSelected = selectedCalendarDay === key;
+
+                        return (
+                            <button
+                                key={key}
+                                type="button"
+                                className={`calendar-day ${isSelected ? 'is-selected' : ''} ${dayMeetings.length ? 'has-meetings' : ''}`}
+                                onClick={() => dayMeetings.length && setSelectedCalendarDay(key)}
+                                disabled={!dayMeetings.length}
+                                aria-label={dayMeetings.length ? `${dayMeetings.length} spotkań ${date.toLocaleDateString('pl-PL')}` : `Brak spotkań ${date.toLocaleDateString('pl-PL')}`}
+                            >
+                                <span className="calendar-day-number">{formatCalendarDayLabel(date)}</span>
+                                {dayMeetings.length ? <span className="calendar-badge">{dayMeetings.length}</span> : null}
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {selectedDayMeetings.length ? (
+                    <div className="calendar-day-popup" role="dialog" aria-label="Spotkania dla wybranego dnia">
+                        {pendingMeetingDelete && selectedDayMeetings.some((meeting) => meeting.id === pendingMeetingDelete.meetingId) ? (
+                            <div className="meeting-delete-confirmation">
+                                <p>Czy na pewno chcesz usunąć to spotkanie?</p>
+                                <div className="meeting-item-actions">
+                                    <button type="button" className="primary-action" onClick={() => deleteMeetingFromClub(pendingMeetingDelete.clubId, pendingMeetingDelete.meetingId)}>
+                                        Tak, usuń
+                                    </button>
+                                    <button type="button" className="secondary" onClick={() => setPendingMeetingDelete(null)}>
+                                        Anuluj
+                                    </button>
+                                </div>
+                            </div>
+                        ) : null}
+
+                        <div className="calendar-day-popup-header">
+                            <strong>{new Date(`${selectedCalendarDay}T00:00:00`).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+                            <button type="button" className="secondary calendar-close-button" onClick={() => setSelectedCalendarDay(null)}>
+                                Zamknij
+                            </button>
+                        </div>
+                        <div className="calendar-day-meetings">
+                            {selectedDayMeetings
+                                .slice()
+                                .sort((left, right) => new Date(left.startsAt) - new Date(right.startsAt))
+                                .map((meeting) => {
+                                    const canEdit = canManageMeeting(meeting);
+                                    const isEditing = editingMeetingId === meeting.id;
+
+                                    return (
+                                        <article key={meeting.id} className="calendar-meeting-item">
+                                            <div className="calendar-meeting-top">
+                                                <span className="status-pill green">Spotkanie</span>
+                                                <span className="meeting-strip-time">{new Date(meeting.startsAt).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}</span>
+                                            </div>
+                                            <h3>{meeting.clubName || 'Klub'}</h3>
+                                            <p>{meeting.title || 'Spotkanie'}</p>
+                                            {isEditing ? (
+                                                <div className="meeting-edit-form">
+                                                    <div className="meeting-scheduler-grid">
+                                                        <label className="field-group">
+                                                            <span>Data</span>
+                                                            <input
+                                                                type="date"
+                                                                value={meetingEditDraft.date}
+                                                                onChange={(event) => setMeetingEditDraft((current) => ({ ...current, date: event.target.value }))}
+                                                            />
+                                                        </label>
+                                                        <label className="field-group">
+                                                            <span>Godzina</span>
+                                                            <input
+                                                                type="time"
+                                                                value={meetingEditDraft.time}
+                                                                onChange={(event) => setMeetingEditDraft((current) => ({ ...current, time: event.target.value }))}
+                                                            />
+                                                        </label>
+                                                    </div>
+                                                    <div className="field-group">
+                                                        <label htmlFor={`meeting-edit-title-cal-${meeting.id}`}>Tytuł</label>
+                                                        <input
+                                                            id={`meeting-edit-title-cal-${meeting.id}`}
+                                                            type="text"
+                                                            value={meetingEditDraft.title}
+                                                            onChange={(event) => setMeetingEditDraft((current) => ({ ...current, title: event.target.value }))}
+                                                        />
+                                                    </div>
+                                                    <div className="field-group">
+                                                        <label htmlFor={`meeting-edit-notes-cal-${meeting.id}`}>Notatka</label>
+                                                        <textarea
+                                                            id={`meeting-edit-notes-cal-${meeting.id}`}
+                                                            value={meetingEditDraft.notes}
+                                                            onChange={(event) => setMeetingEditDraft((current) => ({ ...current, notes: event.target.value }))}
+                                                            rows={3}
+                                                        />
+                                                    </div>
+                                                    <div className="meeting-item-actions">
+                                                        <button type="button" className="primary-action" onClick={() => saveMeetingEdit(meeting.clubId)}>
+                                                            Zapisz
+                                                        </button>
+                                                        <button type="button" className="secondary" onClick={() => {
+                                                            setEditingMeetingId(null);
+                                                            setMeetingEditDraft({ date: '', time: '', title: '', notes: '' });
+                                                        }}>
+                                                            Anuluj
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="meeting-strip-meta">
+                                                        <span>{meeting.contactName || 'Brak kontaktu'}</span>
+                                                        <span>{getMeetingCreatorLabel(meeting)}</span>
+                                                        <span>{meeting.notes || 'Bez dodatkowych notatek'}</span>
+                                                    </div>
+                                                    {canEdit ? (
+                                                        <div className="meeting-item-actions">
+                                                            <button type="button" className="icon-button" aria-label="Edytuj spotkanie" title="Edytuj spotkanie" onClick={() => beginMeetingEdit({
+                                                                id: meeting.clubId,
+                                                                'Nazwa klubu': meeting.clubName,
+                                                            }, meeting)}>
+                                                                ✎
+                                                            </button>
+                                                            <button type="button" className="icon-button danger" aria-label="Usuń spotkanie" title="Usuń spotkanie" onClick={() => setPendingMeetingDelete({ clubId: meeting.clubId, meetingId: meeting.id })}>
+                                                                🗑
+                                                            </button>
+                                                        </div>
+                                                    ) : null}
+                                                </>
+                                            )}
+                                        </article>
+                                    );
+                                })}
+                        </div>
+                    </div>
+                ) : null}
+            </div>
+        );
+    }
+
+    function renderMeetingScheduler(club, compact = false) {
+        if (!club) {
+            return null;
+        }
+
+        const isMeetingSelected = currentClub?.id === club.id && currentClub?.callStatus === STATUS_MEETING;
+        const hasScheduledMeeting = Array.isArray(club.scheduledMeetings) && club.scheduledMeetings.some((meeting) => meeting.startsAt);
+
+        if (!isMeetingSelected && !hasScheduledMeeting) {
+            return null;
+        }
+
+        return (
+            <div className={`meeting-scheduler ${compact ? 'compact' : ''}`}>
+                <div className="meeting-scheduler-header">
+                    <div>
+                        <div className="step">Kalendarz rozmowy</div>
+                        <h2>Dodaj termin spotkania</h2>
+                    </div>
+                    {hasScheduledMeeting ? <span className="status-pill green">Zapisane</span> : null}
+                </div>
+
+                {isMeetingSelected ? (
+                    <>
+                        <div className="meeting-scheduler-grid">
+                            <label className="field-group">
+                                <span>Data</span>
+                                <input
+                                    type="date"
+                                    value={meetingDraft.date}
+                                    onChange={(event) => setMeetingDraft((current) => ({ ...current, date: event.target.value }))}
+                                />
+                            </label>
+                            <label className="field-group">
+                                <span>Godzina</span>
+                                <input
+                                    type="time"
+                                    value={meetingDraft.time}
+                                    onChange={(event) => setMeetingDraft((current) => ({ ...current, time: event.target.value }))}
+                                />
+                            </label>
+                        </div>
+                        <div className="field-group">
+                            <label htmlFor="meeting-title">Tytuł spotkania</label>
+                            <input
+                                id="meeting-title"
+                                type="text"
+                                value={meetingDraft.title}
+                                onChange={(event) => setMeetingDraft((current) => ({ ...current, title: event.target.value }))}
+                                placeholder="Spotkanie - nazwa klubu"
+                            />
+                        </div>
+                        <div className="field-group">
+                            <label htmlFor="meeting-notes">Notatka do kalendarza</label>
+                            <textarea
+                                id="meeting-notes"
+                                value={meetingDraft.notes}
+                                onChange={(event) => setMeetingDraft((current) => ({ ...current, notes: event.target.value }))}
+                                placeholder="Np. demo online, link wyślę mailem"
+                                rows={compact ? 3 : 4}
+                            />
+                        </div>
+                        <div className="meeting-scheduler-actions">
+                            <button
+                                type="button"
+                                className="primary-action"
+                                onClick={() => addMeetingToClub(club.id, meetingDraft)}
+                            >
+                                Dodaj do kalendarza
+                            </button>
+                            <p className="subtle">
+                                Po zapisaniu spotkanie pojawi się nad memo i w karuzeli najbliższych terminów.
+                            </p>
+                        </div>
+                    </>
+                ) : null}
+
+                {hasScheduledMeeting ? (
+                    <div className="timeline-list meeting-timeline">
+                        {pendingMeetingDelete && pendingMeetingDelete.clubId === club.id ? (
+                            <div className="meeting-delete-confirmation">
+                                <p>Czy na pewno chcesz usunąć to spotkanie?</p>
+                                <div className="meeting-item-actions">
+                                    <button type="button" className="primary-action" onClick={() => deleteMeetingFromClub(pendingMeetingDelete.clubId, pendingMeetingDelete.meetingId)}>
+                                        Tak, usuń
+                                    </button>
+                                    <button type="button" className="secondary" onClick={() => setPendingMeetingDelete(null)}>
+                                        Anuluj
+                                    </button>
+                                </div>
+                            </div>
+                        ) : null}
+
+                        {club.scheduledMeetings
+                            .slice()
+                            .filter((meeting) => meeting.startsAt)
+                            .sort((left, right) => new Date(left.startsAt) - new Date(right.startsAt))
+                            .map((meeting) => {
+                                const canEdit = canManageMeeting(meeting);
+                                const isEditing = editingMeetingId === meeting.id;
+
+                                return (
+                                    <article key={meeting.id} className="timeline-item meeting-item">
+                                        <div className="timeline-item-head">
+                                            <strong>{meeting.title}</strong>
+                                            <span>{formatMeetingWhen(meeting.startsAt)}</span>
+                                        </div>
+                                        {isEditing ? (
+                                            <div className="meeting-edit-form">
+                                                <div className="meeting-scheduler-grid">
+                                                    <label className="field-group">
+                                                        <span>Data</span>
+                                                        <input
+                                                            type="date"
+                                                            value={meetingEditDraft.date}
+                                                            onChange={(event) => setMeetingEditDraft((current) => ({ ...current, date: event.target.value }))}
+                                                        />
+                                                    </label>
+                                                    <label className="field-group">
+                                                        <span>Godzina</span>
+                                                        <input
+                                                            type="time"
+                                                            value={meetingEditDraft.time}
+                                                            onChange={(event) => setMeetingEditDraft((current) => ({ ...current, time: event.target.value }))}
+                                                        />
+                                                    </label>
+                                                </div>
+                                                <div className="field-group">
+                                                    <label htmlFor={`meeting-edit-title-${meeting.id}`}>Tytuł</label>
+                                                    <input
+                                                        id={`meeting-edit-title-${meeting.id}`}
+                                                        type="text"
+                                                        value={meetingEditDraft.title}
+                                                        onChange={(event) => setMeetingEditDraft((current) => ({ ...current, title: event.target.value }))}
+                                                    />
+                                                </div>
+                                                <div className="field-group">
+                                                    <label htmlFor={`meeting-edit-notes-${meeting.id}`}>Notatka</label>
+                                                    <textarea
+                                                        id={`meeting-edit-notes-${meeting.id}`}
+                                                        value={meetingEditDraft.notes}
+                                                        onChange={(event) => setMeetingEditDraft((current) => ({ ...current, notes: event.target.value }))}
+                                                        rows={3}
+                                                    />
+                                                </div>
+                                                <div className="meeting-item-actions">
+                                                    <button type="button" className="primary-action" onClick={() => saveMeetingEdit(club.id)}>
+                                                        Zapisz
+                                                    </button>
+                                                    <button type="button" className="secondary" onClick={() => {
+                                                        setEditingMeetingId(null);
+                                                        setMeetingEditDraft({ date: '', time: '', title: '', notes: '' });
+                                                    }}>
+                                                        Anuluj
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <p>{meeting.notes || 'Brak dodatkowych notatek.'}</p>
+                                                {canEdit ? (
+                                                    <div className="meeting-item-actions">
+                                                        <button
+                                                            type="button"
+                                                            className="icon-button"
+                                                            aria-label="Edytuj spotkanie"
+                                                            title="Edytuj spotkanie"
+                                                            onClick={() => beginMeetingEdit(club, meeting)}
+                                                        >
+                                                            ✎
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="icon-button danger"
+                                                            aria-label="Usuń spotkanie"
+                                                            title="Usuń spotkanie"
+                                                            onClick={() => setPendingMeetingDelete({ clubId: club.id, meetingId: meeting.id })}
+                                                        >
+                                                            🗑
+                                                        </button>
+                                                    </div>
+                                                ) : null}
+                                            </>
+                                        )}
+                                    </article>
+                                );
+                            })}
+                    </div>
+                ) : null}
             </div>
         );
     }
@@ -2055,6 +3064,7 @@ export default function App() {
                     </div>
 
                     {renderNoteComposer(club)}
+                    {renderMeetingScheduler(club, true)}
                 </div>
             </div>
         );
@@ -2091,7 +3101,7 @@ export default function App() {
                             <div className="conversation-context">
                                 <span className={`status-pill ${getConnectionTone(currentClub.status)}`}>{currentClub['Nazwa klubu']}</span>
                                 <span className={`status-pill ${getStatusTone(currentClub.callStatus)}`}>{currentClub.callStatus}</span>
-                                <span className="status-pill blue">{currentClub['Imie i nazwisko kontaktu'] || 'Brak kontaktu'}</span>
+                                <span className="status-pill blue">{currentClub['Imie i nazwisko kontaktu'] || [currentClub['mail kontaktowy 1'], currentClub['mail kontaktowy 2']].map((value) => String(value || '').trim()).find(Boolean) || 'Brak kontaktu'}</span>
                             </div>
                         </div>
                         <div className="conversation-actions">
@@ -2127,6 +3137,8 @@ export default function App() {
                     {['intro', 'none', 'existing', 'how'].includes(state.currentNode) ? (
                         <div className="tip">Wskazówka: po zadaniu pytania nie mów dalej. Pozwól klientowi odpowiedzieć i wybierz jego odpowiedź powyżej.</div>
                     ) : null}
+
+                    {renderMeetingScheduler(currentClub, true)}
 
                     {finalScreen ? (
                         <div className="outcome-panel">
@@ -2242,6 +3254,17 @@ export default function App() {
                                 {csvImportError ? <p className="error-message">{csvImportError}</p> : null}
                             </div>
 
+                            <div className="card compact calendar-strip-card">
+                                <div className="memo-card-top">
+                                    <div>
+                                        <div className="step">Najbliższe spotkania</div>
+                                        <h2>Karuzela terminów</h2>
+                                    </div>
+                                    <span className="board-count">{upcomingMeetings.length}</span>
+                                </div>
+                                {renderUpcomingMeetingsStrip(upcomingMeetings)}
+                            </div>
+
                             <div className="summary-grid">
                                 <div className="summary-card">
                                     <div className="summary-value">{summary.total}</div>
@@ -2321,6 +3344,8 @@ export default function App() {
                                     5. Po rozmowie dopisz notatkę i kliknij <b>Zacznij rozmowę</b> dla scenariusza sprzedażowego.
                                 </p>
                             </div>
+
+                            {renderMeetingCalendarPanel(upcomingMeetings)}
 
                             <div className="card compact">
                                 <div className="memo-card-top">
