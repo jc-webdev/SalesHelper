@@ -2823,6 +2823,7 @@ export default function App() {
                                     </div>
                                 </div>
 
+                                <div className="list-meetings-right">
                                 <div className="card compact workflow-card workflow-card-small">
                                     <div className="workflow-card-top">
                                         <div className="step">Jak to działa</div>
@@ -2859,14 +2860,14 @@ export default function App() {
                                         5. Po rozmowie dopisz notatkę i kliknij <b>Zacznij rozmowę</b> dla scenariusza sprzedażowego.
                                     </p>
                                 </div>
+
+                                {renderMeetingCalendarPanel(upcomingMeetings)}
+                                </div>
                             </div>
 
                             <div className="card compact board-search-card">
                                 <div className="board-search-row">
-                                    <div>
-                                        <div className="step">Wyszukiwanie</div>
-                                        <h2>Znajdź klub</h2>
-                                    </div>
+                                    <div className="board-search-label">Znajdź klub</div>
                                     <div className="board-search-controls">
                                         <input
                                             type="search"
@@ -2880,10 +2881,10 @@ export default function App() {
                                             </button>
                                         ) : null}
                                     </div>
+                                    <span className="small board-search-count">
+                                        {filteredClubs.length} / {state.clubs.length}
+                                    </span>
                                 </div>
-                                <p className="subtle">
-                                    Pokazano {filteredClubs.length} z {state.clubs.length} klubów.
-                                </p>
                             </div>
 
                             <div className="summary-grid">

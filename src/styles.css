@@ -409,37 +409,59 @@ header {
     align-items: start;
 }
 
-.list-meetings-left {
+.list-meetings-left,
+.list-meetings-right {
     display: grid;
     gap: 16px;
+    align-content: start;
 }
 
 .board-search-card {
     margin-bottom: 0;
+    padding: 12px 16px;
 }
 
 .board-search-row {
     display: flex;
-    justify-content: space-between;
-    gap: 14px;
-    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 12px;
+    align-items: center;
     flex-wrap: wrap;
+}
+
+.board-search-label {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--ink);
+    white-space: nowrap;
 }
 
 .board-search-controls {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: flex-end;
+    flex: 1 1 220px;
+}
+
+.board-search-count {
+    white-space: nowrap;
+    margin-left: auto;
+}
+
+.board-search-controls .secondary {
+    padding: 8px 12px;
+    font-size: 13px;
 }
 
 .board-search-controls input {
-    min-width: min(320px, 100%);
+    width: 100%;
+    max-width: 340px;
     border: 1px solid var(--line);
-    border-radius: var(--radius-md);
-    padding: 11px 14px;
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
     font: inherit;
+    font-size: 13px;
     background: #fff;
     color: var(--ink);
 }
