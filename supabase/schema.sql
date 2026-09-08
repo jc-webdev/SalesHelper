@@ -6,6 +6,7 @@ create table if not exists public.clubs (
     email_1 text,
     email_2 text,
     call_status text not null default 'Nie wykonano połączenia',
+    planned_today boolean not null default false,
     call_note text not null default '',
     payload jsonb not null default '{}'::jsonb,
     created_at timestamptz not null default now(),

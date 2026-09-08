@@ -1,42 +1,73 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import logoOqla from '../logo-oqla.png';
+import logoOqla from './assets/logo-oqla.png';
 import { isSupabaseConfigured, supabase } from './supabaseClient';
 
 const STORAGE_KEY = 'oqla-sales-assistant-react-v1';
 const SUPABASE_TABLE = 'clubs';
 const DEFAULT_STATUS = 'Nie wykonano połączenia';
 const LEGACY_PENDING_STATUS = 'Rozmowa się nie odbyła';
-const STATUS_SENT_OFFER = 'Rozmowa się odbyła - wysłano ofertę';
-const STATUS_MEETING = 'Rozmowa się odbyła - zaplanowane spotkanie';
-const STATUS_LOST = 'Rozmowa się odbyła - lost';
+const STATUS_CALLBACK = 'Wykonano połączenie, czekamy na kontakt zwrotny';
+const STATUS_SENT_OFFER = 'Wysłano ofertę';
+const STATUS_MEETING = 'Zaplanowane spotkanie';
+const STATUS_SUSPENDED = 'Działania zawieszone';
+const STATUS_WON = 'Won';
+const STATUS_LOST = 'Lost';
 const API_BASE_URL = import.meta.env.DEV ? 'http://127.0.0.1:8787' : '';
 const STATUS_OPTIONS = [
     DEFAULT_STATUS,
-    LEGACY_PENDING_STATUS,
+    STATUS_CALLBACK,
     STATUS_SENT_OFFER,
     STATUS_MEETING,
+    STATUS_SUSPENDED,
+    STATUS_WON,
     STATUS_LOST,
 ];
 
 const COLUMN_DEFINITIONS = [
     {
         id: 'pending',
-        title: 'Do kontaktu',
-        statuses: [DEFAULT_STATUS, LEGACY_PENDING_STATUS],
+        title: 'Niepodjęte rozmowy',
+        kind: 'pending',
+    },
+    {
+        id: 'today',
+        title: 'Plan na dziś',
+        kind: 'today',
+    },
+    {
+        id: 'callback',
+        title: STATUS_CALLBACK,
+        kind: 'status',
+        statuses: [STATUS_CALLBACK],
     },
     {
         id: 'offer',
         title: STATUS_SENT_OFFER,
+        kind: 'status',
         statuses: [STATUS_SENT_OFFER],
     },
     {
         id: 'meeting',
         title: STATUS_MEETING,
+        kind: 'status',
         statuses: [STATUS_MEETING],
+    },
+    {
+        id: 'suspended',
+        title: STATUS_SUSPENDED,
+        kind: 'status',
+        statuses: [STATUS_SUSPENDED],
+    },
+    {
+        id: 'won',
+        title: STATUS_WON,
+        kind: 'status',
+        statuses: [STATUS_WON],
     },
     {
         id: 'lost',
         title: STATUS_LOST,
+        kind: 'status',
         statuses: [STATUS_LOST],
     },
 ];
@@ -287,6 +318,43 @@ function buildLocationSearchFromState(state) {
 
 const initialRouteState = getRouteStateFromLocation();
 
+function normalizeCallStatus(callStatus) {
+    const status = String(callStatus || '').trim();
+
+    switch (status) {
+        case DEFAULT_STATUS:
+        case STATUS_CALLBACK:
+        case STATUS_SENT_OFFER:
+        case STATUS_MEETING:
+        case STATUS_SUSPENDED:
+        case STATUS_WON:
+        case STATUS_LOST:
+            return status;
+        case LEGACY_PENDING_STATUS:
+            return DEFAULT_STATUS;
+        case 'Rozmowa się odbyła - wysłano ofertę':
+            return STATUS_SENT_OFFER;
+        case 'Rozmowa się odbyła - zaplanowane spotkanie':
+            return STATUS_MEETING;
+        case 'Rozmowa się odbyła - lost':
+            return STATUS_LOST;
+        default:
+            return DEFAULT_STATUS;
+    }
+}
+
+function isPendingWorkflowStatus(callStatus) {
+    return normalizeCallStatus(callStatus) === DEFAULT_STATUS;
+}
+
+function normalizePlannedToday(plannedToday, callStatus) {
+    if (!isPendingWorkflowStatus(callStatus)) {
+        return false;
+    }
+
+    return plannedToday === true || plannedToday === 'true' || plannedToday === 1 || plannedToday === '1';
+}
+
 const editableFieldConfigs = [
     { key: 'adres strony', label: 'Adres strony' },
     { key: 'mail kontaktowy 1', label: 'Mail kontaktowy 1' },
@@ -315,6 +383,7 @@ const exportFieldConfigs = [
     { key: 'Ilość kamer', label: 'Ilość kamer' },
     { key: 'Województwo', label: 'Województwo' },
     { key: 'Notatka', label: 'Notatka' },
+    { key: 'plannedToday', label: 'Plan na dziś' },
     { key: 'callStatus', label: 'status po rozmowie' },
 ];
 
@@ -332,6 +401,68 @@ function createMeetingId() {
     }
 
     return `meeting-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createEmptyManualClubDraft() {
+    return {
+        'Nazwa klubu': '',
+        'adres strony': '',
+        'mail kontaktowy 1': '',
+        'mail kontaktowy 2': '',
+        'Nr telefonu': '',
+        'Imie i nazwisko kontaktu': '',
+        status: 'Ręcznie dodany',
+        'Padel double': '',
+        'Padel Single': '',
+        'Ilość kamer': '',
+        'Województwo': '',
+        Notatka: '',
+        plannedToday: false,
+    };
+}
+
+function createUniqueClubId(name, existingClubs) {
+    const base = slugify(name);
+    const usedIds = new Set(existingClubs.map((club) => club.id));
+    if (!usedIds.has(base)) {
+        return base;
+    }
+
+    let suffix = 2;
+    let nextId = `${base}-${suffix}`;
+    while (usedIds.has(nextId)) {
+        suffix += 1;
+        nextId = `${base}-${suffix}`;
+    }
+
+    return nextId;
+}
+
+function buildManualClubRecord(draft, existingClubs) {
+    const clubName = String(draft['Nazwa klubu'] || '').trim();
+    const normalizedStatus = String(draft.status || '').trim() || 'Ręcznie dodany';
+    const clubId = createUniqueClubId(clubName, existingClubs);
+
+    return {
+        id: clubId,
+        'Nazwa klubu': clubName,
+        'adres strony': String(draft['adres strony'] || '').trim(),
+        'mail kontaktowy 1': String(draft['mail kontaktowy 1'] || '').trim(),
+        'mail kontaktowy 2': String(draft['mail kontaktowy 2'] || '').trim(),
+        'Nr telefonu': String(draft['Nr telefonu'] || '').trim(),
+        'Imie i nazwisko kontaktu': String(draft['Imie i nazwisko kontaktu'] || '').trim(),
+        status: normalizedStatus,
+        'Padel double': String(draft['Padel double'] || '').trim(),
+        'Padel Single': String(draft['Padel Single'] || '').trim(),
+        'Ilość kamer': String(draft['Ilość kamer'] || '').trim(),
+        'Województwo': String(draft['Województwo'] || '').trim(),
+        Notatka: String(draft.Notatka || '').trim(),
+        callStatus: DEFAULT_STATUS,
+        plannedToday: Boolean(draft.plannedToday),
+        callNote: String(draft.Notatka || '').trim(),
+        notesTimeline: [],
+        scheduledMeetings: [],
+    };
 }
 
 function normalizeTimelineNotes(notes, fallbackText = '', fallbackCreatedAt = '') {
@@ -499,6 +630,7 @@ function buildImportPlan(importedClubs, existingClubs) {
             newClubs.push({
                 ...importedClub,
                 callStatus: DEFAULT_STATUS,
+                plannedToday: false,
                 callNote: '',
                 notesTimeline: [],
                 scheduledMeetings: [],
@@ -582,7 +714,8 @@ function buildExportCsv(clubs) {
 function normalizeLoadedClubs(clubs) {
     return clubs.map((club) => ({
         ...club,
-        callStatus: club.callStatus || DEFAULT_STATUS,
+        callStatus: normalizeCallStatus(club.callStatus || DEFAULT_STATUS),
+        plannedToday: normalizePlannedToday(club.plannedToday ?? club.planned_today, club.callStatus || DEFAULT_STATUS),
         callNote: club.callNote || '',
         notesTimeline: normalizeTimelineNotes(club.notesTimeline, club.callNote, club.updatedAt || club.updated_at || ''),
         scheduledMeetings: normalizeScheduledMeetings(club.scheduledMeetings || club.meetings || []),
@@ -595,7 +728,8 @@ function mapClubToSupabaseRow(club) {
         club_name: club['Nazwa klubu'] || '',
         email_1: club['mail kontaktowy 1'] || '',
         email_2: club['mail kontaktowy 2'] || '',
-        call_status: club.callStatus || DEFAULT_STATUS,
+        call_status: normalizeCallStatus(club.callStatus || DEFAULT_STATUS),
+        planned_today: Boolean(club.plannedToday),
         call_note: club.callNote || '',
         payload: club,
     };
@@ -616,7 +750,8 @@ function mapSupabaseRowToClub(row) {
         'Nazwa klubu': row.club_name || payload['Nazwa klubu'] || '',
         'mail kontaktowy 1': row.email_1 || payload['mail kontaktowy 1'] || '',
         'mail kontaktowy 2': row.email_2 || payload['mail kontaktowy 2'] || '',
-        callStatus: row.call_status || payload.callStatus || DEFAULT_STATUS,
+        callStatus: normalizeCallStatus(row.call_status || payload.callStatus || DEFAULT_STATUS),
+        plannedToday: normalizePlannedToday(row.planned_today ?? payload.plannedToday ?? payload.planned_today, row.call_status || payload.callStatus || DEFAULT_STATUS),
         callNote: row.call_note || payload.callNote || '',
         notesTimeline,
         scheduledMeetings,
@@ -737,6 +872,7 @@ function parseCsv(text) {
         });
         record.id = slugify(record['Nazwa klubu'] || `klub-${index + 1}-${index}`);
         record.callStatus = DEFAULT_STATUS;
+        record.plannedToday = false;
         record.callNote = '';
         record.notesTimeline = [];
         record.scheduledMeetings = [];
@@ -747,7 +883,8 @@ function parseCsv(text) {
 function normalizeClub(record, existingRecord) {
     return {
         ...record,
-        callStatus: existingRecord?.callStatus || record.callStatus || DEFAULT_STATUS,
+        callStatus: normalizeCallStatus(existingRecord?.callStatus || record.callStatus || DEFAULT_STATUS),
+        plannedToday: normalizePlannedToday(existingRecord?.plannedToday ?? record.plannedToday, existingRecord?.callStatus || record.callStatus || DEFAULT_STATUS),
         callNote: existingRecord?.callNote || record.callNote || '',
         notesTimeline: existingRecord?.notesTimeline || record.notesTimeline || [],
         scheduledMeetings: existingRecord?.scheduledMeetings || record.scheduledMeetings || [],
@@ -763,38 +900,51 @@ function getContactFirstName(value) {
 }
 
 function getStatusTone(status) {
-    if (status === STATUS_MEETING) {
+    const normalizedStatus = normalizeCallStatus(status);
+
+    if (normalizedStatus === STATUS_MEETING || normalizedStatus === STATUS_WON) {
         return 'green';
     }
-    if (status === STATUS_LOST) {
+    if (normalizedStatus === STATUS_LOST) {
         return 'red';
     }
-    if (status === STATUS_SENT_OFFER) {
+    if (normalizedStatus === STATUS_SUSPENDED) {
+        return 'gray';
+    }
+    if (normalizedStatus === STATUS_SENT_OFFER || normalizedStatus === STATUS_CALLBACK) {
         return 'amber';
     }
-    if (status === DEFAULT_STATUS || status === LEGACY_PENDING_STATUS) {
+    if (normalizedStatus === DEFAULT_STATUS || normalizedStatus === LEGACY_PENDING_STATUS) {
         return 'blue';
     }
     return 'amber';
 }
 
 function getCompactCallStatusLabel(status) {
-    if (status === DEFAULT_STATUS) {
+    const normalizedStatus = normalizeCallStatus(status);
+
+    if (normalizedStatus === DEFAULT_STATUS) {
         return DEFAULT_STATUS;
     }
-    if (status === LEGACY_PENDING_STATUS) {
-        return DEFAULT_STATUS;
+    if (normalizedStatus === STATUS_CALLBACK) {
+        return STATUS_CALLBACK;
     }
-    if (status === STATUS_SENT_OFFER) {
-        return 'Wysłano ofertę';
+    if (normalizedStatus === STATUS_SENT_OFFER) {
+        return STATUS_SENT_OFFER;
     }
-    if (status === STATUS_MEETING) {
-        return 'Spotkanie';
+    if (normalizedStatus === STATUS_MEETING) {
+        return STATUS_MEETING;
     }
-    if (status === STATUS_LOST) {
-        return 'Lost';
+    if (normalizedStatus === STATUS_SUSPENDED) {
+        return STATUS_SUSPENDED;
     }
-    return status;
+    if (normalizedStatus === STATUS_WON) {
+        return STATUS_WON;
+    }
+    if (normalizedStatus === STATUS_LOST) {
+        return STATUS_LOST;
+    }
+    return normalizedStatus;
 }
 
 function getConnectionTone(csvStatus) {
@@ -833,6 +983,10 @@ export default function App() {
     const [isDetailEditing, setIsDetailEditing] = useState(false);
     const [detailDraft, setDetailDraft] = useState(null);
     const [workflowInfoOpen, setWorkflowInfoOpen] = useState(false);
+    const [clubSearchQuery, setClubSearchQuery] = useState('');
+    const [isManualClubModalOpen, setIsManualClubModalOpen] = useState(false);
+    const [manualClubDraft, setManualClubDraft] = useState(() => createEmptyManualClubDraft());
+    const [manualClubError, setManualClubError] = useState('');
     const [sharedMemos, setSharedMemos] = useState([]);
     const [isMemoComposerOpen, setIsMemoComposerOpen] = useState(false);
     const [memoDraft, setMemoDraft] = useState('');
@@ -1074,13 +1228,17 @@ export default function App() {
 
     const summary = useMemo(() => {
         const total = state.clubs.length;
-        const pending = state.clubs.filter((club) => [DEFAULT_STATUS, LEGACY_PENDING_STATUS].includes(club.callStatus)).length;
-        const offer = state.clubs.filter((club) => club.callStatus === STATUS_SENT_OFFER).length;
-        const meetings = state.clubs.filter((club) => club.callStatus === STATUS_MEETING).length;
-        const lost = state.clubs.filter((club) => club.callStatus === STATUS_LOST).length;
+        const pending = state.clubs.filter((club) => isPendingWorkflowStatus(club.callStatus) && !club.plannedToday).length;
+        const plannedToday = state.clubs.filter((club) => isPendingWorkflowStatus(club.callStatus) && club.plannedToday).length;
+        const callback = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_CALLBACK).length;
+        const offer = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_SENT_OFFER).length;
+        const meetings = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_MEETING).length;
+        const suspended = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_SUSPENDED).length;
+        const won = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_WON).length;
+        const lost = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_LOST).length;
         const notes = state.clubs.reduce((count, club) => count + (Array.isArray(club.notesTimeline) ? club.notesTimeline.length : 0), 0);
 
-        return { total, pending, offer, lost, meetings, notes };
+        return { total, pending, plannedToday, callback, offer, meetings, suspended, won, lost, notes };
     }, [state.clubs]);
 
     const boardColumns = useMemo(() => {
@@ -1090,13 +1248,51 @@ export default function App() {
         }));
 
         state.clubs.forEach((club) => {
-            const status = club.callStatus || DEFAULT_STATUS;
-            const column = columns.find((item) => item.statuses.includes(status)) || columns[0];
+            const columnId = getClubWorkflowColumnId(club);
+            const column = columns.find((item) => item.id === columnId) || columns[0];
             column.clubs.push(club);
         });
 
         return columns;
     }, [state.clubs]);
+
+    const filteredClubs = useMemo(() => {
+        const query = normalizeText(clubSearchQuery);
+        if (!query) {
+            return state.clubs;
+        }
+
+        return state.clubs.filter((club) => {
+            const haystack = [
+                club['Nazwa klubu'],
+                club['adres strony'],
+                club['mail kontaktowy 1'],
+                club['mail kontaktowy 2'],
+                club['Nr telefonu'],
+                club['Imie i nazwisko kontaktu'],
+                club.status,
+                club.callStatus,
+                club.Notatka,
+            ].map((value) => normalizeText(value)).join(' ');
+
+            return haystack.includes(query);
+        });
+    }, [clubSearchQuery, state.clubs]);
+
+    const visibleBoardColumns = useMemo(() => {
+        const columns = COLUMN_DEFINITIONS.map((column) => ({
+            ...column,
+            clubs: [],
+        }));
+
+        filteredClubs.forEach((club) => {
+            const columnId = getClubWorkflowColumnId(club);
+            const column = columns.find((item) => item.id === columnId) || columns[0];
+            column.clubs.push(club);
+        });
+
+        return columns;
+    }, [filteredClubs]);
 
     const upcomingMeetings = useMemo(() => {
         const now = Date.now();
@@ -1196,6 +1392,42 @@ export default function App() {
         });
     }
 
+    function openManualClubModal() {
+        setManualClubError('');
+        setManualClubDraft(createEmptyManualClubDraft());
+        setIsManualClubModalOpen(true);
+    }
+
+    function closeManualClubModal() {
+        setIsManualClubModalOpen(false);
+        setManualClubError('');
+        setManualClubDraft(createEmptyManualClubDraft());
+    }
+
+    function handleCreateManualClub(event) {
+        event.preventDefault();
+
+        const clubName = String(manualClubDraft['Nazwa klubu'] || '').trim();
+        if (!clubName) {
+            setManualClubError('Nazwa klubu jest wymagana.');
+            return;
+        }
+
+        const nextClub = buildManualClubRecord(manualClubDraft, state.clubs);
+        setState((currentState) => ({
+            ...currentState,
+            clubs: [nextClub, ...currentState.clubs],
+        }));
+        closeManualClubModal();
+    }
+
+    function updateManualClubDraftField(fieldKey, fieldValue) {
+        setManualClubDraft((currentDraft) => ({
+            ...currentDraft,
+            [fieldKey]: fieldValue,
+        }));
+    }
+
     function handleCsvUpload(file) {
         if (!file) {
             return;
@@ -1244,7 +1476,7 @@ export default function App() {
 
     function goConversation(nextNode) {
         if (nextNode === 'success' && currentClub && currentClub.callStatus !== STATUS_MEETING) {
-            updateClubStatus(currentClub.id, STATUS_MEETING);
+            updateClubWorkflowStatus(currentClub.id, STATUS_MEETING);
             resetMeetingDraft(currentClub);
         }
 
@@ -1523,7 +1755,7 @@ export default function App() {
     }
 
     function updateClubCallStatus(clubId, callStatus) {
-        persistPatch(clubId, { callStatus });
+        updateClubWorkflowStatus(clubId, callStatus);
     }
 
     async function handleLogin(event) {
@@ -2043,6 +2275,77 @@ export default function App() {
         );
     }
 
+    function renderManualClubModal() {
+        return (
+            <div className="import-modal-backdrop" onClick={closeManualClubModal}>
+                <div className="import-modal club-modal manual-club-modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="conversation-top">
+                        <div>
+                            <div className="step">Dodaj klub ręcznie</div>
+                            <h1>Nowy klub</h1>
+                            <p className="subtle">Wprowadź dane bez CSV. Klub od razu trafi do listy i będzie widoczny w boardzie.</p>
+                        </div>
+                        <div className="conversation-actions">
+                            <button type="button" className="secondary" onClick={closeManualClubModal}>
+                                Anuluj
+                            </button>
+                            <button type="submit" form="manual-club-form" className="primary-action">
+                                Dodaj klub
+                            </button>
+                        </div>
+                    </div>
+
+                    <form id="manual-club-form" className="manual-club-form" onSubmit={handleCreateManualClub}>
+                        <div className="editor-grid">
+                            {[
+                                ['Nazwa klubu', 'Nazwa klubu', false, true],
+                                ['adres strony', 'Adres strony', false, false],
+                                ['mail kontaktowy 1', 'Mail kontaktowy 1', false, false],
+                                ['mail kontaktowy 2', 'Mail kontaktowy 2', false, false],
+                                ['Nr telefonu', 'Numer telefonu', false, false],
+                                ['Imie i nazwisko kontaktu', 'Imię i nazwisko kontaktu', false, false],
+                                ['status', 'Status z CSV', false, false],
+                                ['Padel double', 'Padel double', false, false],
+                                ['Padel Single', 'Padel Single', false, false],
+                                ['Ilość kamer', 'Ilość kamer', false, false],
+                                ['Województwo', 'Województwo', false, false],
+                                ['Notatka', 'Notatka', true, false],
+                            ].map(([key, label, textarea, required]) => (
+                                <label key={key} className={`editor-field ${textarea ? 'wide' : ''}`}>
+                                    <span>{label}</span>
+                                    {textarea ? (
+                                        <textarea
+                                            value={manualClubDraft[key] || ''}
+                                            onChange={(event) => updateManualClubDraftField(key, event.target.value)}
+                                            placeholder="Brak"
+                                        />
+                                    ) : (
+                                        <input
+                                            type="text"
+                                            value={manualClubDraft[key] || ''}
+                                            onChange={(event) => updateManualClubDraftField(key, event.target.value)}
+                                            placeholder="Brak"
+                                            required={required}
+                                        />
+                                    )}
+                                </label>
+                            ))}
+                            <label className="manual-planned-today">
+                                <input
+                                    type="checkbox"
+                                    checked={Boolean(manualClubDraft.plannedToday)}
+                                    onChange={(event) => updateManualClubDraftField('plannedToday', event.target.checked)}
+                                />
+                                <span>Plan na dziś</span>
+                            </label>
+                        </div>
+                        {manualClubError ? <p className="error-message">{manualClubError}</p> : null}
+                    </form>
+                </div>
+            </div>
+        );
+    }
+
     function startDetailEditing() {
         if (!selectedClubForListModal) {
             return;
@@ -2174,7 +2477,7 @@ export default function App() {
             return;
         }
 
-        updateClubStatus(currentClub.id, callStatus);
+        updateClubWorkflowStatus(currentClub.id, callStatus);
         if (callStatus === STATUS_MEETING) {
             resetMeetingDraft(currentClub);
         } else {
@@ -2190,8 +2493,64 @@ export default function App() {
         }
     }
 
-    function getColumnTargetStatus(column) {
-        return column.statuses[0] || DEFAULT_STATUS;
+    function getClubWorkflowColumnId(club) {
+        const status = normalizeCallStatus(club?.callStatus || DEFAULT_STATUS);
+
+        if (status === DEFAULT_STATUS) {
+            return club?.plannedToday ? 'today' : 'pending';
+        }
+
+        if (status === STATUS_CALLBACK) {
+            return 'callback';
+        }
+
+        if (status === STATUS_SENT_OFFER) {
+            return 'offer';
+        }
+
+        if (status === STATUS_MEETING) {
+            return 'meeting';
+        }
+
+        if (status === STATUS_SUSPENDED) {
+            return 'suspended';
+        }
+
+        if (status === STATUS_WON) {
+            return 'won';
+        }
+
+        if (status === STATUS_LOST) {
+            return 'lost';
+        }
+
+        return 'pending';
+    }
+
+    function getColumnDropPatch(column) {
+        if (column.id === 'today') {
+            return { callStatus: DEFAULT_STATUS, plannedToday: true };
+        }
+
+        if (column.id === 'pending') {
+            return { callStatus: DEFAULT_STATUS, plannedToday: false };
+        }
+
+        return {
+            callStatus: column.statuses?.[0] || DEFAULT_STATUS,
+            plannedToday: false,
+        };
+    }
+
+    function updateClubWorkflowStatus(clubId, callStatus) {
+        const normalizedStatus = normalizeCallStatus(callStatus);
+        const patch = { callStatus: normalizedStatus };
+
+        if (normalizedStatus !== DEFAULT_STATUS) {
+            patch.plannedToday = false;
+        }
+
+        persistPatch(clubId, patch);
     }
 
     function handleDragStart(event, clubId) {
@@ -2225,17 +2584,24 @@ export default function App() {
             return;
         }
 
-        const targetStatus = getColumnTargetStatus(column);
+        const targetPatch = getColumnDropPatch(column);
         const club = state.clubs.find((item) => item.id === droppedClubId);
 
         setDraggedClubId(null);
         setDragOverColumnId(null);
 
-        if (!club || club.callStatus === targetStatus) {
+        if (!club) {
             return;
         }
 
-        updateClubStatus(club.id, targetStatus);
+        if (
+            normalizeCallStatus(club.callStatus) === targetPatch.callStatus
+            && Boolean(club.plannedToday) === Boolean(targetPatch.plannedToday)
+        ) {
+            return;
+        }
+
+        persistPatch(club.id, targetPatch);
     }
 
     function buildApiUrl(path) {
@@ -2917,7 +3283,7 @@ export default function App() {
                             <select
                                 className={`status-select ${statusTone}`}
                                 value={club.callStatus || DEFAULT_STATUS}
-                                onChange={(event) => updateClubStatus(club.id, event.target.value)}
+                                onChange={(event) => updateClubWorkflowStatus(club.id, event.target.value)}
                             >
                                 {STATUS_OPTIONS.map((statusOption) => (
                                     <option key={statusOption} value={statusOption}>
@@ -3224,45 +3590,181 @@ export default function App() {
             </header>
 
             {activePanel === 'admin' ? renderAdminPanel() : (
-                <main className={state.view === 'conversation' ? 'single-column' : 'layout'}>
+                <main className={state.view === 'conversation' ? 'single-column' : 'list-layout'}>
                     {state.view === 'list' ? (
-                        <section>
-                            <div className="card">
-                                <div className="hero">
-                                    <div>
-                                        <div className="step">Lista telefonów do wykonania</div>
-                                        <h1>Import CSV i kontrola rozmów</h1>
-                                        <p className="subtle">
-                                            Wgraj plik CSV z klubami, a aplikacja zamieni go na listę zadań. Każdy rekord można rozwinąć, zobaczyć dane kontaktowe, otworzyć stronę klubu, zacząć rozmowę i zapisać własną notatkę oraz status po kontakcie.
-                                        </p>
+                        <section className="list-dashboard">
+                            <div className="list-top-grid">
+                                <div className="card">
+                                    <div className="hero">
+                                        <div>
+                                            <div className="step">Lista telefonów do wykonania</div>
+                                            <h1>Import CSV i kontrola rozmów</h1>
+                                            <p className="subtle">
+                                                Wgraj plik CSV z klubami, a aplikacja zamieni go na listę zadań. Każdy rekord można rozwinąć, zobaczyć dane kontaktowe, otworzyć stronę klubu, zacząć rozmowę i zapisać własną notatkę oraz status po kontakcie.
+                                            </p>
+                                        </div>
+
+                                        <div className="upload-row">
+                                            <label className="file-label">
+                                                Wczytaj CSV
+                                                <input type="file" accept=".csv,text/csv" onChange={(event) => handleCsvUpload(event.target.files?.[0])} />
+                                            </label>
+                                            <button type="button" className="secondary" onClick={openManualClubModal}>
+                                                Dodaj klub ręcznie
+                                            </button>
+                                            <button type="button" className="secondary" onClick={loadSample}>
+                                                Załaduj próbkę
+                                            </button>
+                                            <button type="button" className="primary-action" onClick={exportCsvToFile}>
+                                                Eksportuj CSV do zespołu
+                                            </button>
+                                        </div>
                                     </div>
 
-                                    <div className="upload-row">
-                                        <label className="file-label">
-                                            Wczytaj CSV
-                                            <input type="file" accept=".csv,text/csv" onChange={(event) => handleCsvUpload(event.target.files?.[0])} />
-                                        </label>
-                                        <button type="button" className="secondary" onClick={loadSample}>
-                                            Załaduj próbkę
-                                        </button>
-                                        <button type="button" className="primary-action" onClick={exportCsvToFile}>
-                                            Eksportuj CSV do zespołu
-                                        </button>
-                                    </div>
+                                    {csvImportError ? <p className="error-message">{csvImportError}</p> : null}
                                 </div>
-
-                                {csvImportError ? <p className="error-message">{csvImportError}</p> : null}
                             </div>
 
-                            <div className="card compact calendar-strip-card">
-                                <div className="memo-card-top">
-                                    <div>
-                                        <div className="step">Najbliższe spotkania</div>
-                                        <h2>Karuzela terminów</h2>
+                            <div className="list-meetings-grid">
+                                <div className="list-meetings-left">
+                                    <div className="card compact calendar-strip-card">
+                                        <div className="memo-card-top">
+                                            <div>
+                                                <div className="step">Najbliższe spotkania</div>
+                                                <h2>Karuzela terminów</h2>
+                                            </div>
+                                            <span className="board-count">{upcomingMeetings.length}</span>
+                                        </div>
+                                        {renderUpcomingMeetingsStrip(upcomingMeetings)}
                                     </div>
-                                    <span className="board-count">{upcomingMeetings.length}</span>
+
+                                    <div className="card compact">
+                                        <div className="memo-card-top">
+                                            <div>
+                                                <div className="step">Wspólne memo</div>
+                                                <h2>Szybkie notatki dla zespołu</h2>
+                                            </div>
+                                            {!isMemoComposerOpen ? (
+                                                <button type="button" className="secondary" onClick={() => setIsMemoComposerOpen(true)}>
+                                                    Dodaj
+                                                </button>
+                                            ) : null}
+                                        </div>
+
+                                        {isMemoComposerOpen ? (
+                                            <form className="memo-composer" onSubmit={handleCreateSharedMemo}>
+                                                <textarea
+                                                    value={memoDraft}
+                                                    onChange={(event) => setMemoDraft(event.target.value)}
+                                                    placeholder="Wpisz notatkę widoczną dla całego zespołu..."
+                                                    rows={5}
+                                                />
+                                                <div className="memo-composer-actions">
+                                                    <button type="submit" className="memo-icon-button memo-confirm" aria-label="Zatwierdź notatkę">
+                                                        ✓
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="memo-icon-button memo-cancel"
+                                                        aria-label="Odrzuć notatkę"
+                                                        onClick={() => {
+                                                            setIsMemoComposerOpen(false);
+                                                            setMemoDraft('');
+                                                        }}
+                                                    >
+                                                        ×
+                                                    </button>
+                                                </div>
+                                            </form>
+                                        ) : null}
+
+                                        <div className="memo-list">
+                                            {sharedMemos.length ? sharedMemos.map((memo) => (
+                                                <div key={memo.id} className="memo-item">
+                                                    <div className="memo-item-head">
+                                                        <strong>{memo.author_name}</strong>
+                                                    </div>
+                                                    <div className="memo-item-meta">
+                                                        <span>{new Date(memo.created_at).toLocaleString('pl-PL')}</span>
+                                                        {(memo.author_id === session?.user?.id || userProfile?.is_admin) ? (
+                                                            <button
+                                                                type="button"
+                                                                className="memo-delete"
+                                                                aria-label="Usuń notatkę"
+                                                                onClick={() => handleDeleteSharedMemo(memo.id)}
+                                                            >
+                                                                ×
+                                                            </button>
+                                                        ) : null}
+                                                    </div>
+                                                    <p>{memo.note}</p>
+                                                </div>
+                                            )) : <p className="subtle">Brak wspólnych notatek.</p>}
+                                        </div>
+                                    </div>
                                 </div>
-                                {renderUpcomingMeetingsStrip(upcomingMeetings)}
+
+                                <div className="card compact workflow-card workflow-card-small">
+                                    <div className="workflow-card-top">
+                                        <div className="step">Jak to działa</div>
+                                        <button
+                                            type="button"
+                                            className="info-icon"
+                                            aria-label="Pokaż wymagane kolumny CSV"
+                                            aria-expanded={workflowInfoOpen}
+                                            onClick={() => setWorkflowInfoOpen((current) => !current)}
+                                        >
+                                            i
+                                        </button>
+                                        {workflowInfoOpen ? (
+                                            <div className="workflow-popover" role="dialog" aria-label="Wymagane kolumny CSV">
+                                                <div className="workflow-popover-title">CSV powinien zawierać kolumny:</div>
+                                                <p>
+                                                    <b>Nazwa klubu</b>, <b>adres strony</b>, <b>mail kontaktowy 1</b>, <b>mail kontaktowy 2</b>,
+                                                    <b> Nr telefonu</b>, <b>Imie i nazwisko kontaktu</b>, <b>status</b>, <b>Padel double</b>,
+                                                    <b> Padel Single</b>, <b>Ilość kamer</b>, <b>Województwo</b>, <b>Notatka</b>.
+                                                </p>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                    <h2>Krótki workflow</h2>
+                                    <p className="subtle">
+                                        1. Wczytaj CSV z klubami.
+                                        <br />
+                                        2. Każdy klub trafia do jednej z kolumn workflow.
+                                        <br />
+                                        3. Kolumna <b>Plan na dziś</b> pozwala oznaczyć priorytet bez zmiany statusu.
+                                        <br />
+                                        4. Zmień status z listy rozwijanej, a klub automatycznie przejdzie do odpowiedniej kolumny.
+                                        <br />
+                                        5. Po rozmowie dopisz notatkę i kliknij <b>Zacznij rozmowę</b> dla scenariusza sprzedażowego.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="card compact board-search-card">
+                                <div className="board-search-row">
+                                    <div>
+                                        <div className="step">Wyszukiwanie</div>
+                                        <h2>Znajdź klub</h2>
+                                    </div>
+                                    <div className="board-search-controls">
+                                        <input
+                                            type="search"
+                                            value={clubSearchQuery}
+                                            onChange={(event) => setClubSearchQuery(event.target.value)}
+                                            placeholder="Szukaj po nazwie, mailu, statusie..."
+                                        />
+                                        {clubSearchQuery ? (
+                                            <button type="button" className="secondary" onClick={() => setClubSearchQuery('')}>
+                                                Wyczyść
+                                            </button>
+                                        ) : null}
+                                    </div>
+                                </div>
+                                <p className="subtle">
+                                    Pokazano {filteredClubs.length} z {state.clubs.length} klubów.
+                                </p>
                             </div>
 
                             <div className="summary-grid">
@@ -3271,8 +3773,16 @@ export default function App() {
                                     <div className="summary-label">klubów w CSV</div>
                                 </div>
                                 <div className="summary-card">
+                                    <div className="summary-value">{summary.plannedToday}</div>
+                                    <div className="summary-label">plan na dziś</div>
+                                </div>
+                                <div className="summary-card">
                                     <div className="summary-value">{summary.pending}</div>
-                                    <div className="summary-label">do kontaktu</div>
+                                    <div className="summary-label">niepodjęte rozmowy</div>
+                                </div>
+                                <div className="summary-card">
+                                    <div className="summary-value">{summary.callback}</div>
+                                    <div className="summary-label">kontakt zwrotny</div>
                                 </div>
                                 <div className="summary-card">
                                     <div className="summary-value">{summary.offer}</div>
@@ -3280,12 +3790,24 @@ export default function App() {
                                 </div>
                                 <div className="summary-card">
                                     <div className="summary-value">{summary.meetings}</div>
-                                    <div className="summary-label">spotkanie zaplanowane</div>
+                                    <div className="summary-label">zaplanowane spotkanie</div>
+                                </div>
+                                <div className="summary-card">
+                                    <div className="summary-value">{summary.suspended}</div>
+                                    <div className="summary-label">działania zawieszone</div>
+                                </div>
+                                <div className="summary-card">
+                                    <div className="summary-value">{summary.won}</div>
+                                    <div className="summary-label">won</div>
+                                </div>
+                                <div className="summary-card">
+                                    <div className="summary-value">{summary.lost}</div>
+                                    <div className="summary-label">lost</div>
                                 </div>
                             </div>
 
                             <div className="board-grid">
-                                {boardColumns.map((column) => (
+                                {visibleBoardColumns.map((column) => (
                                     <section
                                         key={column.id}
                                         className={`board-column ${dragOverColumnId === column.id ? 'is-drop-target' : ''}`}
@@ -3297,122 +3819,16 @@ export default function App() {
                                             <h3>{column.title}</h3>
                                             <span className="board-count">{column.clubs.length}</span>
                                         </div>
-                                        <div className="list">
-                                            {column.clubs.length ? column.clubs.map((club) => renderClubCard(club)) : <div className="empty-column">Brak klubów</div>}
-                                        </div>
-                                    </section>
-                                ))}
-                            </div>
-                        </section>
+                                       <div className="list">
+                                           {column.clubs.length ? column.clubs.map((club) => renderClubCard(club)) : <div className="empty-column">Brak klubów</div>}
+                                       </div>
+                                   </section>
+                               ))}
+                           </div>
+                       </section>
                     ) : null}
 
-                    {state.view === 'list' ? (
-                        <aside>
-                            <div className="card compact">
-                            <div className="workflow-card-top">
-                                    <div className="step">Jak to działa</div>
-                                <button
-                                    type="button"
-                                    className="info-icon"
-                                    aria-label="Pokaż wymagane kolumny CSV"
-                                    aria-expanded={workflowInfoOpen}
-                                    onClick={() => setWorkflowInfoOpen((current) => !current)}
-                                >
-                                    i
-                                </button>
-                                {workflowInfoOpen ? (
-                                    <div className="workflow-popover" role="dialog" aria-label="Wymagane kolumny CSV">
-                                        <div className="workflow-popover-title">CSV powinien zawierać kolumny:</div>
-                                        <p>
-                                            <b>Nazwa klubu</b>, <b>adres strony</b>, <b>mail kontaktowy 1</b>, <b>mail kontaktowy 2</b>,
-                                            <b> Nr telefonu</b>, <b>Imie i nazwisko kontaktu</b>, <b>status</b>, <b>Padel double</b>,
-                                            <b> Padel Single</b>, <b>Ilość kamer</b>, <b>Województwo</b>, <b>Notatka</b>.
-                                        </p>
-                                    </div>
-                                ) : null}
-                            </div>
-                            <h2>Krótki workflow</h2>
-                            <p className="subtle">
-                                1. Wczytaj CSV z klubami.
-                                <br />
-                                2. Każdy klub trafia do 1 z 4 kolumn statusowych.
-                                    <br />
-                                    3. Domyślny status to <b>{DEFAULT_STATUS}</b>.
-                                    <br />
-                                    4. Zmień status z listy rozwijanej, a klub automatycznie przejdzie do odpowiedniej kolumny.
-                                    <br />
-                                    5. Po rozmowie dopisz notatkę i kliknij <b>Zacznij rozmowę</b> dla scenariusza sprzedażowego.
-                                </p>
-                            </div>
-
-                            {renderMeetingCalendarPanel(upcomingMeetings)}
-
-                            <div className="card compact">
-                                <div className="memo-card-top">
-                                    <div>
-                                        <div className="step">Wspólne memo</div>
-                                        <h2>Szybkie notatki dla zespołu</h2>
-                                    </div>
-                                    {!isMemoComposerOpen ? (
-                                        <button type="button" className="secondary" onClick={() => setIsMemoComposerOpen(true)}>
-                                            Dodaj
-                                        </button>
-                                    ) : null}
-                                </div>
-
-                                {isMemoComposerOpen ? (
-                                    <form className="memo-composer" onSubmit={handleCreateSharedMemo}>
-                                        <textarea
-                                            value={memoDraft}
-                                            onChange={(event) => setMemoDraft(event.target.value)}
-                                            placeholder="Wpisz notatkę widoczną dla całego zespołu..."
-                                            rows={5}
-                                        />
-                                        <div className="memo-composer-actions">
-                                            <button type="submit" className="memo-icon-button memo-confirm" aria-label="Zatwierdź notatkę">
-                                                ✓
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="memo-icon-button memo-cancel"
-                                                aria-label="Odrzuć notatkę"
-                                                onClick={() => {
-                                                    setIsMemoComposerOpen(false);
-                                                    setMemoDraft('');
-                                                }}
-                                            >
-                                                ×
-                                            </button>
-                                        </div>
-                                    </form>
-                                ) : null}
-
-                                <div className="memo-list">
-                                    {sharedMemos.length ? sharedMemos.map((memo) => (
-                                        <div key={memo.id} className="memo-item">
-                                            <div className="memo-item-head">
-                                                <strong>{memo.author_name}</strong>
-                                            </div>
-                                            <div className="memo-item-meta">
-                                                <span>{new Date(memo.created_at).toLocaleString('pl-PL')}</span>
-                                                {(memo.author_id === session?.user?.id || userProfile?.is_admin) ? (
-                                                    <button
-                                                        type="button"
-                                                        className="memo-delete"
-                                                        aria-label="Usuń notatkę"
-                                                        onClick={() => handleDeleteSharedMemo(memo.id)}
-                                                    >
-                                                        ×
-                                                    </button>
-                                                ) : null}
-                                            </div>
-                                            <p>{memo.note}</p>
-                                        </div>
-                                    )) : <p className="subtle">Brak wspólnych notatek.</p>}
-                                </div>
-                            </div>
-                        </aside>
-                    ) : null}
+                    {isManualClubModalOpen ? renderManualClubModal() : null}
 
                     {importReview ? (
                         <div className="import-modal-backdrop" onClick={cancelImportReview}>
