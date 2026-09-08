@@ -173,14 +173,23 @@ export default function App() {
 
         let isMounted = true;
 
-        supabase.auth.getSession().then(({ data }) => {
-            if (!isMounted) {
-                return;
-            }
+        supabase.auth.getSession()
+            .then(({ data }) => {
+                if (!isMounted) {
+                    return;
+                }
 
-            setSession(data.session || null);
-            setAuthLoading(false);
-        });
+                setSession(data.session || null);
+                setAuthLoading(false);
+            })
+            .catch(() => {
+                // A flaky connection (e.g. right after switching apps to make
+                // a call) must not leave the app stuck on the loading screen
+                // forever — onAuthStateChange still fires once it recovers.
+                if (isMounted) {
+                    setAuthLoading(false);
+                }
+            });
 
         const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
             setSession(nextSession);
@@ -236,10 +245,26 @@ export default function App() {
             setAuthError('');
             setAdminMessage('');
 
-            const [{ data: profile, error: profileError }, { data: clubs, error: clubsError }] = await Promise.all([
-                supabase.from('profiles').select('*').eq('id', session.user.id).single(),
-                supabase.from(SUPABASE_TABLE).select('*').order('updated_at', { ascending: false }),
-            ]);
+            let profile;
+            let profileError;
+            let clubs;
+            let clubsError;
+
+            try {
+                ([{ data: profile, error: profileError }, { data: clubs, error: clubsError }] = await Promise.all([
+                    supabase.from('profiles').select('*').eq('id', session.user.id).single(),
+                    supabase.from(SUPABASE_TABLE).select('*').order('updated_at', { ascending: false }),
+                ]));
+            } catch (networkError) {
+                // A dropped connection (e.g. right after switching apps to
+                // make a call) must not leave the board stuck loading
+                // forever with no way back short of a manual reload.
+                if (isMounted) {
+                    setCloudMessage('Błąd połączenia z Supabase');
+                    setClubsLoading(false);
+                }
+                return;
+            }
 
             if (!isMounted) {
                 return;
