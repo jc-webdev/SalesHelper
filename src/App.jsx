@@ -73,6 +73,10 @@ function IconChevronRight() {
     return <svg {...iconStrokeProps}><polyline points="9 18 15 12 9 6" /></svg>;
 }
 
+function IconMenu() {
+    return <svg {...iconStrokeProps}><line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17" x2="20" y2="17" /></svg>;
+}
+
 const initialRouteState = getRouteStateFromLocation();
 
 function installViewportDebugOverlay() {
@@ -132,6 +136,7 @@ export default function App() {
     const [editingMemberId, setEditingMemberId] = useState(null);
     const [memberNameDraft, setMemberNameDraft] = useState('');
     const [activePanel, setActivePanel] = useState('board');
+    const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
     const [isDetailEditing, setIsDetailEditing] = useState(false);
     const [detailDraft, setDetailDraft] = useState(null);
     const [workflowInfoOpen, setWorkflowInfoOpen] = useState(false);
@@ -2765,19 +2770,28 @@ export default function App() {
                 <img className="logo-image" src={logoOqla} alt="Oqla" />
                 <div className="badge">Sales Assistant</div>
                 <div className="badge cloud-badge">{cloudMessage}</div>
-                <div className="header-actions">
+                <button
+                    type="button"
+                    className="mobile-nav-toggle"
+                    aria-label={isMobileNavOpen ? 'Zamknij menu' : 'Otwórz menu'}
+                    aria-expanded={isMobileNavOpen}
+                    onClick={() => setIsMobileNavOpen((current) => !current)}
+                >
+                    {isMobileNavOpen ? <IconX /> : <IconMenu />}
+                </button>
+                <div className={isMobileNavOpen ? 'header-actions is-open' : 'header-actions'}>
                     {userProfile?.is_admin ? (
                         <>
-                            <button type="button" className={activePanel === 'board' ? 'secondary active-nav' : 'secondary'} onClick={() => setActivePanel('board')}>
+                            <button type="button" className={activePanel === 'board' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('board'); setIsMobileNavOpen(false); }}>
                                 Aplikacja
                             </button>
-                            <button type="button" className={activePanel === 'admin' ? 'secondary active-nav' : 'secondary'} onClick={() => setActivePanel('admin')}>
+                            <button type="button" className={activePanel === 'admin' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('admin'); setIsMobileNavOpen(false); }}>
                                 Admin
                             </button>
                         </>
                     ) : null}
                     <span className="badge user-badge">{session.user.email}</span>
-                    <button type="button" className="secondary" onClick={handleLogout}>
+                    <button type="button" className="secondary" onClick={() => { setIsMobileNavOpen(false); handleLogout(); }}>
                         Wyloguj
                     </button>
                 </div>
