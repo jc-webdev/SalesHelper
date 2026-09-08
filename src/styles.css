@@ -409,8 +409,7 @@ header {
     align-items: start;
 }
 
-.list-meetings-left,
-.list-meetings-right {
+.list-meetings-left {
     display: grid;
     gap: 16px;
     align-content: start;

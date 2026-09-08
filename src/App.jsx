@@ -2742,6 +2742,43 @@ export default function App() {
 
                                     {csvImportError ? <p className="error-message">{csvImportError}</p> : null}
                                 </div>
+
+                                <div className="card compact workflow-card workflow-card-small">
+                                    <div className="workflow-card-top">
+                                        <div className="step">Jak to działa</div>
+                                        <button
+                                            type="button"
+                                            className="info-icon"
+                                            aria-label="Pokaż wymagane kolumny CSV"
+                                            aria-expanded={workflowInfoOpen}
+                                            onClick={() => setWorkflowInfoOpen((current) => !current)}
+                                        >
+                                            i
+                                        </button>
+                                        {workflowInfoOpen ? (
+                                            <div className="workflow-popover" role="dialog" aria-label="Wymagane kolumny CSV">
+                                                <div className="workflow-popover-title">CSV powinien zawierać kolumny:</div>
+                                                <p>
+                                                    <b>Nazwa klubu</b>, <b>adres strony</b>, <b>mail kontaktowy 1</b>, <b>mail kontaktowy 2</b>,
+                                                    <b> Nr telefonu</b>, <b>Imie i nazwisko kontaktu</b>, <b>status</b>, <b>Padel double</b>,
+                                                    <b> Padel Single</b>, <b>Ilość kamer</b>, <b>Województwo</b>, <b>Notatka</b>.
+                                                </p>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                    <h2>Krótki workflow</h2>
+                                    <p className="subtle">
+                                        1. Wczytaj CSV z klubami.
+                                        <br />
+                                        2. Każdy klub trafia do jednej z kolumn workflow.
+                                        <br />
+                                        3. Kolumna <b>Plan na dziś</b> pozwala oznaczyć priorytet bez zmiany statusu.
+                                        <br />
+                                        4. Zmień status z listy rozwijanej, a klub automatycznie przejdzie do odpowiedniej kolumny.
+                                        <br />
+                                        5. Po rozmowie dopisz notatkę i kliknij <b>Zacznij rozmowę</b> dla scenariusza sprzedażowego.
+                                    </p>
+                                </div>
                             </div>
 
                             <div className="list-meetings-grid">
@@ -2823,46 +2860,7 @@ export default function App() {
                                     </div>
                                 </div>
 
-                                <div className="list-meetings-right">
-                                <div className="card compact workflow-card workflow-card-small">
-                                    <div className="workflow-card-top">
-                                        <div className="step">Jak to działa</div>
-                                        <button
-                                            type="button"
-                                            className="info-icon"
-                                            aria-label="Pokaż wymagane kolumny CSV"
-                                            aria-expanded={workflowInfoOpen}
-                                            onClick={() => setWorkflowInfoOpen((current) => !current)}
-                                        >
-                                            i
-                                        </button>
-                                        {workflowInfoOpen ? (
-                                            <div className="workflow-popover" role="dialog" aria-label="Wymagane kolumny CSV">
-                                                <div className="workflow-popover-title">CSV powinien zawierać kolumny:</div>
-                                                <p>
-                                                    <b>Nazwa klubu</b>, <b>adres strony</b>, <b>mail kontaktowy 1</b>, <b>mail kontaktowy 2</b>,
-                                                    <b> Nr telefonu</b>, <b>Imie i nazwisko kontaktu</b>, <b>status</b>, <b>Padel double</b>,
-                                                    <b> Padel Single</b>, <b>Ilość kamer</b>, <b>Województwo</b>, <b>Notatka</b>.
-                                                </p>
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                    <h2>Krótki workflow</h2>
-                                    <p className="subtle">
-                                        1. Wczytaj CSV z klubami.
-                                        <br />
-                                        2. Każdy klub trafia do jednej z kolumn workflow.
-                                        <br />
-                                        3. Kolumna <b>Plan na dziś</b> pozwala oznaczyć priorytet bez zmiany statusu.
-                                        <br />
-                                        4. Zmień status z listy rozwijanej, a klub automatycznie przejdzie do odpowiedniej kolumny.
-                                        <br />
-                                        5. Po rozmowie dopisz notatkę i kliknij <b>Zacznij rozmowę</b> dla scenariusza sprzedażowego.
-                                    </p>
-                                </div>
-
                                 {renderMeetingCalendarPanel(upcomingMeetings)}
-                                </div>
                             </div>
 
                             <div className="card compact board-search-card">
