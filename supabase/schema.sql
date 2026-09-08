@@ -13,6 +13,8 @@ create table if not exists public.clubs (
     updated_at timestamptz not null default now()
 );
 
+alter table public.clubs add column if not exists planned_today boolean not null default false;
+
 create table if not exists public.profiles (
     id uuid primary key references auth.users(id) on delete cascade,
     email text not null unique,
