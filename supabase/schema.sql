@@ -6,11 +6,14 @@ create table if not exists public.clubs (
     email_1 text,
     email_2 text,
     call_status text not null default 'Nie wykonano połączenia',
+    planned_today boolean not null default false,
     call_note text not null default '',
     payload jsonb not null default '{}'::jsonb,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
+
+alter table public.clubs add column if not exists planned_today boolean not null default false;
 
 create table if not exists public.profiles (
     id uuid primary key references auth.users(id) on delete cascade,
@@ -135,8 +138,16 @@ create policy "Allow authenticated update profiles"
 on public.profiles
 for update
 to authenticated
-using (id = auth.uid())
-with check (id = auth.uid());
+using (id = auth.uid() or public.is_admin_user(auth.uid()))
+with check (id = auth.uid() or public.is_admin_user(auth.uid()));
+
+drop policy if exists "Allow admin update any profile" on public.profiles;
+create policy "Allow admin update any profile"
+on public.profiles
+for update
+to authenticated
+using (public.is_admin_user(auth.uid()))
+with check (public.is_admin_user(auth.uid()));
 
 drop policy if exists "Allow authenticated read shared memos" on public.shared_memos;
 create policy "Allow authenticated read shared memos"
