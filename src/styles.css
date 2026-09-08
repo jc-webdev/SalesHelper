@@ -1,14 +1,16 @@
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
 
 :root {
-    /* Brand, from the Oqla mark */
-    --navy: #0d1b26;
-    --navy-2: #16293a;
+    /* Brand */
+    --navy: #192a3c;
+    --navy-2: #223549;
+    --background: var(--navy);
     --blue: #2d83bd;
     --blue-deep: #1f5d86;
     --blue-soft: #eaf3fa;
-    --green: #1f9d5c;
-    --green-soft: #e6f6ec;
+    --green: #1d9330;
+    --green-deep: #167526;
+    --green-soft: #e3f4e5;
     --red: #c53d3d;
     --red-soft: #fbeaea;
     --amber: #b3790f;
@@ -17,7 +19,7 @@
     --gray-soft: #edf1f4;
 
     /* Neutrals */
-    --ink: #101c26;
+    --ink: var(--navy);
     --muted: #5c6b78;
     --faint: #8695a1;
     --line: #dfe5ea;
@@ -136,13 +138,18 @@ h2 {
 /* ---------- Header ---------- */
 
 header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
     margin: 0 -24px 20px;
     padding: 16px 24px;
-    background: var(--navy);
+    background: color-mix(in oklab, var(--background) 80%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
     color: #eef2f5;
 }
 
@@ -937,16 +944,16 @@ header {
 }
 
 .primary-action {
-    background: var(--blue);
+    background: var(--green);
     color: #fff;
 }
 
 .primary-action:hover {
-    background: var(--blue-deep);
+    background: var(--green-deep);
 }
 
 .upload-row .primary-action {
-    box-shadow: 0 8px 20px rgba(45, 131, 189, 0.2);
+    box-shadow: 0 8px 20px rgba(29, 147, 48, 0.22);
 }
 
 .file-label:hover,
