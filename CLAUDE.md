@@ -30,13 +30,20 @@ Bez skonfigurowanego Supabase aplikacja działa w trybie lokalnym: dane w `local
 - `shared_memos` — notatki widoczne dla całego zespołu (nie per-klub).
 - RLS: każdy zalogowany user widzi wszystkie kluby i memo; profil może edytować tylko siebie (lub admin — dowolny, przez `is_admin_user()`).
 
-## Struktura `src/App.jsx`
+## Struktura `src/App.jsx` i `src/lib/`
 
-Jeden komponent `App()` trzyma cały stan (auth, kluby, kalendarz, panel admina, import CSV) i renderuje wszystko przez lokalne funkcje `render*`. Z grubsza w pliku:
+Czysta logika (bez Reacta) mieszkająca kiedyś na górze `App.jsx` została wydzielona do `src/lib/*.js`, podzielona wg domeny:
 
-1. **Stałe i słownik statusów** (na górze) — `STATUS_*`, `COLUMN_DEFINITIONS` (kolumny tablicy kanban), `conversationNodes` (drzewo skryptu rozmowy sprzedażowej — każdy węzeł to `title`/`script`/`buttons` z przejściami do kolejnych węzłów).
-2. **Czyste funkcje pomocnicze** (przed `export default function App()`) — normalizacja statusu/klubu, import/eksport CSV (własny mini-parser, nie biblioteka), mapowanie klub ↔ wiersz Supabase, routing przez query string (`?mode=conversation&club=...`).
-3. **`App()`** — stan (dużo `useState`), efekty synchronizujące z Supabase (sesja, auto-zapis klubów z debounce, wspólne notatki), potem funkcje `render*` dla poszczególnych widoków: ekran logowania, panel admina, modal ręcznego dodania klubu, timeline notatek, kalendarz spotkań, karta klubu, modal szczegółów klubu, widok rozmowy (skrypt sprzedażowy).
+- `constants.js` — statusy (`STATUS_*`), definicje kolumn tablicy kanban, konfiguracje pól formularza, stan początkowy.
+- `callScript.js` — `conversationNodes`, drzewo skryptu rozmowy sprzedażowej (każdy węzeł to `title`/`script`/`buttons` z przejściami do kolejnych węzłów).
+- `sampleClubs.js` — przykładowe dane CSV używane przy pierwszym uruchomieniu bez Supabase.
+- `csv.js` — własny mini-parser CSV (nie biblioteka), eksport do CSV.
+- `clubs.js` — normalizacja statusu/klubu, import/eksport CSV (dopasowanie i konflikty), mapowanie klub ↔ wiersz Supabase.
+- `notes.js`, `meetings.js` — normalizacja timeline'u notatek i zaplanowanych spotkań, generowanie ID, konwersje dat.
+- `format.js` — drobne helpery tekstowe (`slugify`, `escapeHtml`, `normalizeText`).
+- `routing.js` — odczyt/zapis stanu widoku do query stringa (`?mode=conversation&club=...`).
+
+`App.jsx` (komponent) importuje z powyższych i trzyma: stan (dużo `useState`), efekty synchronizujące z Supabase (sesja, auto-zapis klubów z debounce, wspólne notatki), oraz lokalne funkcje `render*` dla poszczególnych widoków: ekran logowania, panel admina, modal ręcznego dodania klubu, timeline notatek, kalendarz spotkań, karta klubu, modal szczegółów klubu, widok rozmowy (skrypt sprzedażowy). Te funkcje `render*` zostały celowo w `App.jsx` — są ściśle zamknięciami nad dziesiątkami stanów/handlerów komponentu, więc wydzielenie ich do osobnych komponentów wymagałoby przewleczenia sporej liczby propsów; do zrobienia w osobnym kroku, jeśli będzie potrzebne.
 
 Dwa widoki główne, przełączane przez `state.view` i odzwierciedlane w URL: `list` (tablica kanban) i `conversation` (skrypt rozmowy krok po kroku dla wybranego klubu).
 
