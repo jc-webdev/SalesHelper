@@ -2102,6 +2102,15 @@ button:disabled,
 /* ---------- Responsive ---------- */
 
 @media (max-width: 900px) {
+    /* iOS Safari auto-zooms the page on focus for any form field under
+       16px, and can get stuck zoomed out afterward. Force every field to
+       16px here regardless of its own smaller font-size to prevent that. */
+    input,
+    select,
+    textarea {
+        font-size: 16px !important;
+    }
+
     .layout {
         grid-template-columns: 1fr;
     }
