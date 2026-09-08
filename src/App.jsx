@@ -293,7 +293,15 @@ export default function App() {
         return () => {
             isMounted = false;
         };
-    }, [session]);
+        // Deliberately keyed on the user id, not the whole `session` object:
+        // Supabase issues a new session object (same user, new token) on
+        // every silent token refresh, which happens automatically in the
+        // background and again whenever the tab regains focus. Keying this
+        // on `session` re-ran the full fetch-and-overwrite on every refresh,
+        // clobbering any local change (drag, status edit) that hadn't been
+        // saved yet with whatever was already in the database.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [session?.user?.id]);
 
     useEffect(() => {
         if (!session?.access_token) {
@@ -316,7 +324,7 @@ export default function App() {
     }, [session?.access_token]);
 
     useEffect(() => {
-        if (!session?.user || !isSupabaseConfigured || !supabase || clubsLoading) {
+        if (!session?.user?.id || !isSupabaseConfigured || !supabase || clubsLoading) {
             return;
         }
 
@@ -336,7 +344,7 @@ export default function App() {
         return () => {
             window.clearTimeout(timer);
         };
-    }, [clubsLoading, session?.user, state.clubs]);
+    }, [clubsLoading, session?.user?.id, state.clubs]);
 
     const currentClub = useMemo(() => {
         return state.clubs.find((club) => club.id === state.activeClubId)
