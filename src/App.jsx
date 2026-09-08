@@ -5,6 +5,7 @@ import {
     SUPABASE_TABLE,
     DEFAULT_STATUS,
     STATUS_CALLBACK,
+    STATUS_OFFER_REQUEST,
     STATUS_SENT_OFFER,
     STATUS_MEETING,
     STATUS_SUSPENDED,
@@ -386,6 +387,7 @@ export default function App() {
         const pending = state.clubs.filter((club) => isPendingWorkflowStatus(club.callStatus) && !club.plannedToday).length;
         const plannedToday = state.clubs.filter((club) => isPendingWorkflowStatus(club.callStatus) && club.plannedToday).length;
         const callback = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_CALLBACK).length;
+        const offerRequest = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_OFFER_REQUEST).length;
         const offer = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_SENT_OFFER).length;
         const meetings = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_MEETING).length;
         const suspended = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_SUSPENDED).length;
@@ -393,7 +395,7 @@ export default function App() {
         const lost = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_LOST).length;
         const notes = state.clubs.reduce((count, club) => count + (Array.isArray(club.notesTimeline) ? club.notesTimeline.length : 0), 0);
 
-        return { total, pending, plannedToday, callback, offer, meetings, suspended, won, lost, notes };
+        return { total, pending, plannedToday, callback, offerRequest, offer, meetings, suspended, won, lost, notes };
     }, [state.clubs]);
 
     const boardColumns = useMemo(() => {
@@ -1657,6 +1659,10 @@ export default function App() {
 
         if (status === STATUS_CALLBACK) {
             return 'callback';
+        }
+
+        if (status === STATUS_OFFER_REQUEST) {
+            return 'offer-request';
         }
 
         if (status === STATUS_SENT_OFFER) {
@@ -2937,6 +2943,10 @@ export default function App() {
                                 <div className="summary-card">
                                     <div className="summary-value">{summary.callback}</div>
                                     <div className="summary-label">kontakt zwrotny</div>
+                                </div>
+                                <div className="summary-card">
+                                    <div className="summary-value">{summary.offerRequest}</div>
+                                    <div className="summary-label">prośba o ofertę</div>
                                 </div>
                                 <div className="summary-card">
                                     <div className="summary-value">{summary.offer}</div>

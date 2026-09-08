@@ -3,6 +3,7 @@ export const SUPABASE_TABLE = 'clubs';
 export const DEFAULT_STATUS = 'Nie wykonano połączenia';
 export const LEGACY_PENDING_STATUS = 'Rozmowa się nie odbyła';
 export const STATUS_CALLBACK = 'Wykonano połączenie, czekamy na kontakt zwrotny';
+export const STATUS_OFFER_REQUEST = 'Wykonano połączenie, prośba o wysłanie oferty';
 export const STATUS_SENT_OFFER = 'Wysłano ofertę';
 export const STATUS_MEETING = 'Zaplanowane spotkanie';
 export const STATUS_SUSPENDED = 'Działania zawieszone';
@@ -12,6 +13,7 @@ export const API_BASE_URL = import.meta.env.DEV ? 'http://127.0.0.1:8787' : '';
 export const STATUS_OPTIONS = [
     DEFAULT_STATUS,
     STATUS_CALLBACK,
+    STATUS_OFFER_REQUEST,
     STATUS_SENT_OFFER,
     STATUS_MEETING,
     STATUS_SUSPENDED,
@@ -35,6 +37,12 @@ export const COLUMN_DEFINITIONS = [
         title: STATUS_CALLBACK,
         kind: 'status',
         statuses: [STATUS_CALLBACK],
+    },
+    {
+        id: 'offer-request',
+        title: STATUS_OFFER_REQUEST,
+        kind: 'status',
+        statuses: [STATUS_OFFER_REQUEST],
     },
     {
         id: 'offer',
