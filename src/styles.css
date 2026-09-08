@@ -410,6 +410,11 @@ header {
 }
 
 .list-dashboard {
+    /* Establishes its own formatting context — without this, WebKit's
+       layout/viewport-scale calculation could get thrown off by the
+       horizontally-scrolling .board-grid nested deep inside it, leaving
+       mobile Safari's visual viewport stuck zoomed out on load. */
+    position: relative;
     display: grid;
     gap: 16px;
 }
