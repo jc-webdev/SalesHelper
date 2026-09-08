@@ -1021,16 +1021,15 @@ button:disabled,
 }
 
 .board-grid {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(272px, 1fr);
+    display: flex;
+    align-items: flex-start;
     gap: 12px;
-    align-items: start;
     overflow-x: auto;
     padding-bottom: 8px;
 }
 
 .board-column {
+    flex: 0 0 272px;
     background: var(--sunken);
     border: 1px solid var(--line-soft);
     border-radius: var(--radius-lg);
@@ -2134,8 +2133,8 @@ button:disabled,
         grid-template-columns: 1fr;
     }
 
-    .board-grid {
-        grid-auto-columns: minmax(240px, 1fr);
+    .board-column {
+        flex: 0 0 240px;
     }
 
     .detail-status-wrap {
@@ -2219,8 +2218,8 @@ button:disabled,
         grid-template-columns: 1fr;
     }
 
-    .board-grid {
-        grid-auto-columns: minmax(78vw, 300px);
+    .board-column {
+        flex: 0 0 min(78vw, 300px);
     }
 
     .board-search-controls input {

@@ -74,6 +74,38 @@ function IconChevronRight() {
 
 const initialRouteState = getRouteStateFromLocation();
 
+function installViewportDebugOverlay() {
+    if (typeof window === 'undefined' || !new URLSearchParams(window.location.search).has('debug')) {
+        return;
+    }
+
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#ff0080;color:#fff;font-size:11px;line-height:1.4;padding:6px 8px;font-family:monospace;word-break:break-all;white-space:pre-line;';
+    document.body.appendChild(box);
+
+    function measure() {
+        const de = document.documentElement;
+        let widest = { w: 0, label: 'none' };
+        document.querySelectorAll('body *').forEach((el) => {
+            const w = el.scrollWidth;
+            if (w > widest.w) {
+                widest = { w, label: (el.className && String(el.className)) || el.tagName };
+            }
+        });
+
+        const vv = window.visualViewport;
+        box.textContent =
+            `innerWidth=${window.innerWidth} visualVP=${vv ? Math.round(vv.width) : 'n/a'} docScrollW=${de.scrollWidth} docClientW=${de.clientWidth} bodyScrollW=${document.body.scrollWidth} dpr=${window.devicePixelRatio}\n`
+            + `widest=[${widest.label}] w=${widest.w}\n`
+            + navigator.userAgent;
+    }
+
+    measure();
+    window.addEventListener('resize', measure);
+    window.setTimeout(measure, 1500);
+    window.setTimeout(measure, 4000);
+}
+
 export default function App() {
     const [state, setState] = useState(() => ({
         ...initialState,
@@ -126,6 +158,10 @@ export default function App() {
     const [meetingEditDraft, setMeetingEditDraft] = useState({ date: '', time: '', title: '', notes: '' });
     const meetingsCarouselRef = useRef(null);
     const detailStatusSelectRef = useRef(null);
+
+    useEffect(() => {
+        installViewportDebugOverlay();
+    }, []);
 
     useEffect(() => {
         if (!isSupabaseConfigured || !supabase) {
