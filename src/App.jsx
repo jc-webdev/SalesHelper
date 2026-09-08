@@ -5,6 +5,7 @@ import {
     SUPABASE_TABLE,
     DEFAULT_STATUS,
     STATUS_CALLBACK,
+    STATUS_OFFER_REQUEST,
     STATUS_SENT_OFFER,
     STATUS_MEETING,
     STATUS_SUSPENDED,
@@ -74,6 +75,38 @@ function IconChevronRight() {
 
 const initialRouteState = getRouteStateFromLocation();
 
+function installViewportDebugOverlay() {
+    if (typeof window === 'undefined' || !new URLSearchParams(window.location.search).has('debug')) {
+        return;
+    }
+
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#ff0080;color:#fff;font-size:11px;line-height:1.4;padding:6px 8px;font-family:monospace;word-break:break-all;white-space:pre-line;';
+    document.body.appendChild(box);
+
+    function measure() {
+        const de = document.documentElement;
+        let widest = { w: 0, label: 'none' };
+        document.querySelectorAll('body *').forEach((el) => {
+            const w = el.scrollWidth;
+            if (w > widest.w) {
+                widest = { w, label: (el.className && String(el.className)) || el.tagName };
+            }
+        });
+
+        const vv = window.visualViewport;
+        box.textContent =
+            `innerWidth=${window.innerWidth} visualVP=${vv ? Math.round(vv.width) : 'n/a'} docScrollW=${de.scrollWidth} docClientW=${de.clientWidth} bodyScrollW=${document.body.scrollWidth} dpr=${window.devicePixelRatio}\n`
+            + `widest=[${widest.label}] w=${widest.w}\n`
+            + navigator.userAgent;
+    }
+
+    measure();
+    window.addEventListener('resize', measure);
+    window.setTimeout(measure, 1500);
+    window.setTimeout(measure, 4000);
+}
+
 export default function App() {
     const [state, setState] = useState(() => ({
         ...initialState,
@@ -128,6 +161,10 @@ export default function App() {
     const detailStatusSelectRef = useRef(null);
 
     useEffect(() => {
+        installViewportDebugOverlay();
+    }, []);
+
+    useEffect(() => {
         if (!isSupabaseConfigured || !supabase) {
             setAuthLoading(false);
             setCloudMessage('Supabase nie jest skonfigurowany');
@@ -136,14 +173,23 @@ export default function App() {
 
         let isMounted = true;
 
-        supabase.auth.getSession().then(({ data }) => {
-            if (!isMounted) {
-                return;
-            }
+        supabase.auth.getSession()
+            .then(({ data }) => {
+                if (!isMounted) {
+                    return;
+                }
 
-            setSession(data.session || null);
-            setAuthLoading(false);
-        });
+                setSession(data.session || null);
+                setAuthLoading(false);
+            })
+            .catch(() => {
+                // A flaky connection (e.g. right after switching apps to make
+                // a call) must not leave the app stuck on the loading screen
+                // forever — onAuthStateChange still fires once it recovers.
+                if (isMounted) {
+                    setAuthLoading(false);
+                }
+            });
 
         const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
             setSession(nextSession);
@@ -199,10 +245,26 @@ export default function App() {
             setAuthError('');
             setAdminMessage('');
 
-            const [{ data: profile, error: profileError }, { data: clubs, error: clubsError }] = await Promise.all([
-                supabase.from('profiles').select('*').eq('id', session.user.id).single(),
-                supabase.from(SUPABASE_TABLE).select('*').order('updated_at', { ascending: false }),
-            ]);
+            let profile;
+            let profileError;
+            let clubs;
+            let clubsError;
+
+            try {
+                ([{ data: profile, error: profileError }, { data: clubs, error: clubsError }] = await Promise.all([
+                    supabase.from('profiles').select('*').eq('id', session.user.id).single(),
+                    supabase.from(SUPABASE_TABLE).select('*').order('updated_at', { ascending: false }),
+                ]));
+            } catch (networkError) {
+                // A dropped connection (e.g. right after switching apps to
+                // make a call) must not leave the board stuck loading
+                // forever with no way back short of a manual reload.
+                if (isMounted) {
+                    setCloudMessage('Błąd połączenia z Supabase');
+                    setClubsLoading(false);
+                }
+                return;
+            }
 
             if (!isMounted) {
                 return;
@@ -256,7 +318,15 @@ export default function App() {
         return () => {
             isMounted = false;
         };
-    }, [session]);
+        // Deliberately keyed on the user id, not the whole `session` object:
+        // Supabase issues a new session object (same user, new token) on
+        // every silent token refresh, which happens automatically in the
+        // background and again whenever the tab regains focus. Keying this
+        // on `session` re-ran the full fetch-and-overwrite on every refresh,
+        // clobbering any local change (drag, status edit) that hadn't been
+        // saved yet with whatever was already in the database.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [session?.user?.id]);
 
     useEffect(() => {
         if (!session?.access_token) {
@@ -279,7 +349,7 @@ export default function App() {
     }, [session?.access_token]);
 
     useEffect(() => {
-        if (!session?.user || !isSupabaseConfigured || !supabase || clubsLoading) {
+        if (!session?.user?.id || !isSupabaseConfigured || !supabase || clubsLoading) {
             return;
         }
 
@@ -299,7 +369,7 @@ export default function App() {
         return () => {
             window.clearTimeout(timer);
         };
-    }, [clubsLoading, session?.user, state.clubs]);
+    }, [clubsLoading, session?.user?.id, state.clubs]);
 
     const currentClub = useMemo(() => {
         return state.clubs.find((club) => club.id === state.activeClubId)
@@ -350,6 +420,7 @@ export default function App() {
         const pending = state.clubs.filter((club) => isPendingWorkflowStatus(club.callStatus) && !club.plannedToday).length;
         const plannedToday = state.clubs.filter((club) => isPendingWorkflowStatus(club.callStatus) && club.plannedToday).length;
         const callback = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_CALLBACK).length;
+        const offerRequest = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_OFFER_REQUEST).length;
         const offer = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_SENT_OFFER).length;
         const meetings = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_MEETING).length;
         const suspended = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_SUSPENDED).length;
@@ -357,7 +428,7 @@ export default function App() {
         const lost = state.clubs.filter((club) => normalizeCallStatus(club.callStatus) === STATUS_LOST).length;
         const notes = state.clubs.reduce((count, club) => count + (Array.isArray(club.notesTimeline) ? club.notesTimeline.length : 0), 0);
 
-        return { total, pending, plannedToday, callback, offer, meetings, suspended, won, lost, notes };
+        return { total, pending, plannedToday, callback, offerRequest, offer, meetings, suspended, won, lost, notes };
     }, [state.clubs]);
 
     const boardColumns = useMemo(() => {
@@ -1621,6 +1692,10 @@ export default function App() {
 
         if (status === STATUS_CALLBACK) {
             return 'callback';
+        }
+
+        if (status === STATUS_OFFER_REQUEST) {
+            return 'offer-request';
         }
 
         if (status === STATUS_SENT_OFFER) {
@@ -2901,6 +2976,10 @@ export default function App() {
                                 <div className="summary-card">
                                     <div className="summary-value">{summary.callback}</div>
                                     <div className="summary-label">kontakt zwrotny</div>
+                                </div>
+                                <div className="summary-card">
+                                    <div className="summary-value">{summary.offerRequest}</div>
+                                    <div className="summary-label">prośba o ofertę</div>
                                 </div>
                                 <div className="summary-card">
                                     <div className="summary-value">{summary.offer}</div>

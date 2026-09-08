@@ -45,14 +45,20 @@
 
 html {
     color-scheme: light;
+    overflow-x: hidden;
 }
 
 body {
     margin: 0;
+    overflow-x: hidden;
     font-family: Manrope, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--paper);
     color: var(--ink);
     -webkit-font-smoothing: antialiased;
+}
+
+#root {
+    overflow-x: hidden;
 }
 
 ::selection {
@@ -404,6 +410,11 @@ header {
 }
 
 .list-dashboard {
+    /* Establishes its own formatting context — without this, WebKit's
+       layout/viewport-scale calculation could get thrown off by the
+       horizontally-scrolling .board-grid nested deep inside it, leaving
+       mobile Safari's visual viewport stuck zoomed out on load. */
+    position: relative;
     display: grid;
     gap: 16px;
 }
@@ -1015,16 +1026,15 @@ button:disabled,
 }
 
 .board-grid {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(272px, 1fr);
+    display: flex;
+    align-items: flex-start;
     gap: 12px;
-    align-items: start;
     overflow-x: auto;
     padding-bottom: 8px;
 }
 
 .board-column {
+    flex: 0 0 272px;
     background: var(--sunken);
     border: 1px solid var(--line-soft);
     border-radius: var(--radius-lg);
@@ -2097,6 +2107,15 @@ button:disabled,
 /* ---------- Responsive ---------- */
 
 @media (max-width: 900px) {
+    /* iOS Safari auto-zooms the page on focus for any form field under
+       16px, and can get stuck zoomed out afterward. Force every field to
+       16px here regardless of its own smaller font-size to prevent that. */
+    input,
+    select,
+    textarea {
+        font-size: 16px !important;
+    }
+
     .layout {
         grid-template-columns: 1fr;
     }
@@ -2128,8 +2147,8 @@ button:disabled,
         grid-template-columns: 1fr;
     }
 
-    .board-grid {
-        grid-auto-columns: minmax(240px, 1fr);
+    .board-column {
+        flex: 0 0 240px;
     }
 
     .detail-status-wrap {
@@ -2213,8 +2232,8 @@ button:disabled,
         grid-template-columns: 1fr;
     }
 
-    .board-grid {
-        grid-auto-columns: minmax(78vw, 300px);
+    .board-column {
+        flex: 0 0 min(78vw, 300px);
     }
 
     .board-search-controls input {

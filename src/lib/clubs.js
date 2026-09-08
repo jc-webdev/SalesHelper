@@ -2,6 +2,7 @@ import {
     DEFAULT_STATUS,
     LEGACY_PENDING_STATUS,
     STATUS_CALLBACK,
+    STATUS_OFFER_REQUEST,
     STATUS_SENT_OFFER,
     STATUS_MEETING,
     STATUS_SUSPENDED,
@@ -21,6 +22,7 @@ export function normalizeCallStatus(callStatus) {
     switch (status) {
         case DEFAULT_STATUS:
         case STATUS_CALLBACK:
+        case STATUS_OFFER_REQUEST:
         case STATUS_SENT_OFFER:
         case STATUS_MEETING:
         case STATUS_SUSPENDED:
@@ -335,7 +337,7 @@ export function getStatusTone(status) {
     if (normalizedStatus === STATUS_SUSPENDED) {
         return 'gray';
     }
-    if (normalizedStatus === STATUS_SENT_OFFER || normalizedStatus === STATUS_CALLBACK) {
+    if (normalizedStatus === STATUS_SENT_OFFER || normalizedStatus === STATUS_CALLBACK || normalizedStatus === STATUS_OFFER_REQUEST) {
         return 'amber';
     }
     if (normalizedStatus === DEFAULT_STATUS || normalizedStatus === LEGACY_PENDING_STATUS) {
@@ -352,6 +354,9 @@ export function getCompactCallStatusLabel(status) {
     }
     if (normalizedStatus === STATUS_CALLBACK) {
         return STATUS_CALLBACK;
+    }
+    if (normalizedStatus === STATUS_OFFER_REQUEST) {
+        return STATUS_OFFER_REQUEST;
     }
     if (normalizedStatus === STATUS_SENT_OFFER) {
         return STATUS_SENT_OFFER;
