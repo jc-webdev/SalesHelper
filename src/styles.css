@@ -204,6 +204,26 @@ header {
     margin-left: auto;
 }
 
+.mobile-nav-toggle {
+    display: none;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.06);
+    color: #eef2f5;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+
+.mobile-nav-toggle svg {
+    width: 20px;
+    height: 20px;
+}
+
 .header-actions .secondary {
     background: rgba(255, 255, 255, 0.06);
     border-color: rgba(255, 255, 255, 0.16);
@@ -2259,9 +2279,20 @@ button:disabled,
         display: none;
     }
 
+    .mobile-nav-toggle {
+        display: inline-flex;
+    }
+
     .header-actions {
+        display: none;
         margin-left: 0;
         width: 100%;
         justify-content: flex-start;
+        padding-top: 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .header-actions.is-open {
+        display: flex;
     }
 }
