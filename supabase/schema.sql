@@ -14,6 +14,9 @@ create table if not exists public.clubs (
 );
 
 alter table public.clubs add column if not exists planned_today boolean not null default false;
+alter table public.clubs add column if not exists assigned_to uuid references auth.users(id) on delete set null;
+alter table public.clubs add column if not exists assigned_to_name text;
+alter table public.clubs add column if not exists assigned_to_email text;
 
 create table if not exists public.profiles (
     id uuid primary key references auth.users(id) on delete cascade,
@@ -150,7 +153,7 @@ create policy "Allow authenticated read profiles"
 on public.profiles
 for select
 to authenticated
-using (id = auth.uid());
+using (auth.uid() is not null);
 
 drop policy if exists "Allow authenticated update profiles" on public.profiles;
 create policy "Allow authenticated update profiles"
@@ -203,3 +206,31 @@ for update
 to authenticated
 using (auth.uid() is not null)
 with check (auth.uid() is not null);
+
+-- Live sync: broadcast row changes on these tables to every connected
+-- client (multiple people work on the same board at once). Guarded with
+-- a existence check since `alter publication ... add table` has no
+-- `if not exists` form and errors on a table already in the publication.
+do $$
+begin
+    if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'clubs'
+    ) then
+        alter publication supabase_realtime add table public.clubs;
+    end if;
+
+    if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'shared_memos'
+    ) then
+        alter publication supabase_realtime add table public.shared_memos;
+    end if;
+
+    if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'camera_inventory'
+    ) then
+        alter publication supabase_realtime add table public.camera_inventory;
+    end if;
+end $$;

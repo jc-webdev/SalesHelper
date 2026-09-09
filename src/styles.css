@@ -605,6 +605,27 @@ header {
     box-shadow: var(--focus-ring);
 }
 
+.assignee-filter-select {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    font: inherit;
+    font-size: 13px;
+    background: #fff;
+    color: var(--ink);
+}
+
+.assignee-filter-select:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: var(--focus-ring);
+}
+
+.status-pill.assignee-pill {
+    background: var(--navy);
+    color: #fff;
+}
+
 .workflow-card-small {
     align-self: start;
     padding: 16px;
