@@ -77,6 +77,12 @@ function IconMenu() {
     return <svg {...iconStrokeProps}><line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17" x2="20" y2="17" /></svg>;
 }
 
+const CAMERA_FIELDS = [
+    { key: 'available', dbColumn: 'available', label: 'Kamery dostępne' },
+    { key: 'ordered', dbColumn: 'ordered', label: 'Kamery zamówione, czekamy' },
+    { key: 'toInstall', dbColumn: 'to_install', label: 'Kamery do zainstalowania' },
+];
+
 const initialRouteState = getRouteStateFromLocation();
 
 function installViewportDebugOverlay() {
@@ -137,6 +143,10 @@ export default function App() {
     const [memberNameDraft, setMemberNameDraft] = useState('');
     const [activePanel, setActivePanel] = useState('board');
     const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+    const [cameraInventory, setCameraInventory] = useState({ available: 0, ordered: 0, toInstall: 0 });
+    const [editingCameraField, setEditingCameraField] = useState(null);
+    const [cameraValueDraft, setCameraValueDraft] = useState('');
+    const [cameraUpdateError, setCameraUpdateError] = useState('');
     const [isDetailEditing, setIsDetailEditing] = useState(false);
     const [detailDraft, setDetailDraft] = useState(null);
     const [workflowInfoOpen, setWorkflowInfoOpen] = useState(false);
@@ -239,6 +249,8 @@ export default function App() {
                 setSharedMemos([]);
                 setIsMemoComposerOpen(false);
                 setMemoDraft('');
+                setCameraInventory({ available: 0, ordered: 0, toInstall: 0 });
+                setEditingCameraField(null);
                 setCalendarInitialized(false);
                 setCalendarWeekStart(getStartOfWeek(new Date()));
                 resetMeetingDraft(null);
@@ -254,11 +266,13 @@ export default function App() {
             let profileError;
             let clubs;
             let clubsError;
+            let cameraInventoryRow;
 
             try {
-                ([{ data: profile, error: profileError }, { data: clubs, error: clubsError }] = await Promise.all([
+                ([{ data: profile, error: profileError }, { data: clubs, error: clubsError }, { data: cameraInventoryRow }] = await Promise.all([
                     supabase.from('profiles').select('*').eq('id', session.user.id).single(),
                     supabase.from(SUPABASE_TABLE).select('*').order('updated_at', { ascending: false }),
+                    supabase.from('camera_inventory').select('*').eq('id', 'singleton').single(),
                 ]));
             } catch (networkError) {
                 // A dropped connection (e.g. right after switching apps to
@@ -308,6 +322,14 @@ export default function App() {
             }));
             setCloudMessage('Połączono z Supabase');
             setClubsLoading(false);
+
+            if (cameraInventoryRow) {
+                setCameraInventory({
+                    available: cameraInventoryRow.available ?? 0,
+                    ordered: cameraInventoryRow.ordered ?? 0,
+                    toInstall: cameraInventoryRow.to_install ?? 0,
+                });
+            }
 
             if (resolvedProfile?.is_admin) {
                 await refreshTeamMembers(session.access_token, true);
@@ -1065,6 +1087,50 @@ export default function App() {
 
         if (!error) {
             await refreshSharedMemos();
+        }
+    }
+
+    function openCameraEditor(fieldKey) {
+        setEditingCameraField(fieldKey);
+        setCameraValueDraft('');
+        setCameraUpdateError('');
+    }
+
+    function closeCameraEditor() {
+        setEditingCameraField(null);
+        setCameraValueDraft('');
+        setCameraUpdateError('');
+    }
+
+    async function handleSaveCameraCount(event) {
+        event.preventDefault();
+
+        const field = CAMERA_FIELDS.find((item) => item.key === editingCameraField);
+        if (!field) {
+            return;
+        }
+
+        const trimmed = cameraValueDraft.trim();
+        if (!/^\d+$/.test(trimmed)) {
+            setCameraUpdateError('Podaj liczbę całkowitą, nie mniejszą niż 0.');
+            return;
+        }
+
+        const newValue = Number(trimmed);
+        setCameraInventory((current) => ({ ...current, [field.key]: newValue }));
+        closeCameraEditor();
+
+        if (!session?.user || !supabase) {
+            return;
+        }
+
+        const { error } = await supabase
+            .from('camera_inventory')
+            .update({ [field.dbColumn]: newValue, updated_by: session.user.email })
+            .eq('id', 'singleton');
+
+        if (error) {
+            setCloudMessage('Błąd zapisu liczby kamer');
         }
     }
 
@@ -1995,6 +2061,64 @@ export default function App() {
                 >
                     <IconChevronRight />
                 </button>
+            </div>
+        );
+    }
+
+    function renderCameraInventoryPanel() {
+        return (
+            <div className="card compact camera-inventory-card">
+                <div className="step">Sprzęt</div>
+                <h2>Kamery</h2>
+                <div className="camera-inventory-grid">
+                    {CAMERA_FIELDS.map((field) => (
+                        <div key={field.key} className="camera-box">
+                            <div className="camera-box-top">
+                                <span className="camera-box-label">{field.label}</span>
+                                <button
+                                    type="button"
+                                    className="icon-button camera-edit-button"
+                                    aria-label={`Zmień wartość: ${field.label}`}
+                                    onClick={() => openCameraEditor(field.key)}
+                                >
+                                    <IconPencil />
+                                </button>
+                            </div>
+                            <div className="camera-box-value">{cameraInventory[field.key]}</div>
+
+                            {editingCameraField === field.key ? (
+                                <form className="camera-edit-popover" onSubmit={handleSaveCameraCount}>
+                                    <span className="camera-edit-current">Obecna wartość: {cameraInventory[field.key]}</span>
+                                    <label className="field-group compact-field-group">
+                                        <span>Podaj nową wartość</span>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="1"
+                                            inputMode="numeric"
+                                            autoFocus
+                                            value={cameraValueDraft}
+                                            onChange={(event) => {
+                                                setCameraValueDraft(event.target.value);
+                                                setCameraUpdateError('');
+                                            }}
+                                            placeholder="np. 12"
+                                        />
+                                    </label>
+                                    {cameraUpdateError ? <p className="error-message">{cameraUpdateError}</p> : null}
+                                    <div className="camera-edit-actions">
+                                        <button type="submit" className="primary-action" disabled={cameraValueDraft.trim() === ''}>
+                                            Zapisz
+                                        </button>
+                                        <button type="button" className="secondary" onClick={closeCameraEditor}>
+                                            Anuluj
+                                        </button>
+                                    </div>
+                                </form>
+                            ) : null}
+                        </div>
+                    ))}
+                </div>
             </div>
         );
     }
@@ -2949,7 +3073,10 @@ export default function App() {
                                     </div>
                                 </div>
 
-                                {renderMeetingCalendarPanel(upcomingMeetings)}
+                                <div className="list-meetings-right">
+                                    {renderCameraInventoryPanel()}
+                                    {renderMeetingCalendarPanel(upcomingMeetings)}
+                                </div>
                             </div>
 
                             <div className="card compact board-search-card">

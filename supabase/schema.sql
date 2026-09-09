@@ -34,6 +34,19 @@ create table if not exists public.shared_memos (
     updated_at timestamptz not null default now()
 );
 
+create table if not exists public.camera_inventory (
+    id text primary key,
+    available integer not null default 0,
+    ordered integer not null default 0,
+    to_install integer not null default 0,
+    updated_at timestamptz not null default now(),
+    updated_by text
+);
+
+insert into public.camera_inventory (id)
+values ('singleton')
+on conflict (id) do nothing;
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -95,6 +108,11 @@ create trigger shared_memos_set_updated_at
 before update on public.shared_memos
 for each row execute function public.set_updated_at();
 
+drop trigger if exists camera_inventory_set_updated_at on public.camera_inventory;
+create trigger camera_inventory_set_updated_at
+before update on public.camera_inventory
+for each row execute function public.set_updated_at();
+
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
 after insert on auth.users
@@ -103,6 +121,7 @@ for each row execute function public.handle_new_user();
 alter table public.clubs enable row level security;
 alter table public.profiles enable row level security;
 alter table public.shared_memos enable row level security;
+alter table public.camera_inventory enable row level security;
 
 drop policy if exists "Allow authenticated read clubs" on public.clubs;
 create policy "Allow authenticated read clubs"
@@ -169,3 +188,18 @@ on public.shared_memos
 for delete
 to authenticated
 using (author_id = auth.uid() or public.is_admin_user(auth.uid()));
+
+drop policy if exists "Allow authenticated read camera inventory" on public.camera_inventory;
+create policy "Allow authenticated read camera inventory"
+on public.camera_inventory
+for select
+to authenticated
+using (auth.uid() is not null);
+
+drop policy if exists "Allow authenticated update camera inventory" on public.camera_inventory;
+create policy "Allow authenticated update camera inventory"
+on public.camera_inventory
+for update
+to authenticated
+using (auth.uid() is not null)
+with check (auth.uid() is not null);

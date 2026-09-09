@@ -447,10 +447,104 @@ header {
     align-items: start;
 }
 
-.list-meetings-left {
+.list-meetings-left,
+.list-meetings-right {
     display: grid;
     gap: 16px;
     align-content: start;
+}
+
+.camera-inventory-card h2 {
+    margin-bottom: 12px;
+}
+
+.camera-inventory-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.camera-box {
+    position: relative;
+    background: var(--paper);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-md);
+    padding: 10px;
+}
+
+.camera-box-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.camera-box-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    line-height: 1.25;
+}
+
+.camera-edit-button {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+}
+
+.camera-edit-button svg {
+    width: 13px;
+    height: 13px;
+}
+
+.camera-box-value {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+}
+
+.camera-edit-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 20;
+    width: max(220px, 100%);
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: 14px;
+    display: grid;
+    gap: 10px;
+}
+
+.camera-edit-current {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.camera-edit-popover input {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 9px 11px;
+    font: inherit;
+    background: #fff;
+    color: var(--ink);
+}
+
+.camera-edit-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.camera-edit-actions .primary-action,
+.camera-edit-actions .secondary {
+    flex: 1 1 0;
+    padding: 9px 12px;
+    font-size: 13px;
 }
 
 .board-search-card {
