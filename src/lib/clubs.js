@@ -1,5 +1,6 @@
 import {
     DEFAULT_STATUS,
+    DEFAULT_CSV_STATUS,
     LEGACY_PENDING_STATUS,
     STATUS_CALLBACK,
     STATUS_OFFER_REQUEST,
@@ -62,7 +63,7 @@ export function createEmptyManualClubDraft() {
         'mail kontaktowy 2': '',
         'Nr telefonu': '',
         'Imie i nazwisko kontaktu': '',
-        status: 'Ręcznie dodany',
+        status: DEFAULT_CSV_STATUS,
         'Padel double': '',
         'Padel Single': '',
         'Ilość kamer': '',
@@ -91,7 +92,7 @@ export function createUniqueClubId(name, existingClubs) {
 
 export function buildManualClubRecord(draft, existingClubs) {
     const clubName = String(draft['Nazwa klubu'] || '').trim();
-    const normalizedStatus = String(draft.status || '').trim() || 'Ręcznie dodany';
+    const normalizedStatus = String(draft.status || '').trim() || DEFAULT_CSV_STATUS;
     const clubId = createUniqueClubId(clubName, existingClubs);
 
     return {

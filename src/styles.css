@@ -1595,6 +1595,7 @@ button:disabled,
 }
 
 .editor-field input,
+.editor-field select,
 .editor-field textarea {
     width: 100%;
     border: 1px solid var(--line);

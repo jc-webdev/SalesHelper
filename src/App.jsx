@@ -13,6 +13,7 @@ import {
     STATUS_LOST,
     API_BASE_URL,
     STATUS_OPTIONS,
+    CSV_STATUS_OPTIONS,
     COLUMN_DEFINITIONS,
     editableFieldConfigs,
     initialState,
@@ -1739,16 +1740,25 @@ export default function App() {
                                 ['mail kontaktowy 2', 'Mail kontaktowy 2', false, false],
                                 ['Nr telefonu', 'Numer telefonu', false, false],
                                 ['Imie i nazwisko kontaktu', 'Imię i nazwisko kontaktu', false, false],
-                                ['status', 'Status z CSV', false, false],
+                                ['status', 'Status z CSV', false, false, CSV_STATUS_OPTIONS],
                                 ['Padel double', 'Padel double', false, false],
                                 ['Padel Single', 'Padel Single', false, false],
                                 ['Ilość kamer', 'Ilość kamer', false, false],
                                 ['Województwo', 'Województwo', false, false],
                                 ['Notatka', 'Notatka', true, false],
-                            ].map(([key, label, textarea, required]) => (
+                            ].map(([key, label, textarea, required, options]) => (
                                 <label key={key} className={`editor-field ${textarea ? 'wide' : ''}`}>
                                     <span>{label}</span>
-                                    {textarea ? (
+                                    {options ? (
+                                        <select
+                                            value={manualClubDraft[key] || ''}
+                                            onChange={(event) => updateManualClubDraftField(key, event.target.value)}
+                                        >
+                                            {options.map((option) => (
+                                                <option key={option} value={option}>{option}</option>
+                                            ))}
+                                        </select>
+                                    ) : textarea ? (
                                         <textarea
                                             value={manualClubDraft[key] || ''}
                                             onChange={(event) => updateManualClubDraftField(key, event.target.value)}
@@ -2906,7 +2916,16 @@ export default function App() {
                                 {editableFieldConfigs.map((fieldConfig) => (
                                     <label key={fieldConfig.key} className={`editor-field ${fieldConfig.textarea ? 'wide' : ''}`}>
                                         <span>{fieldConfig.label}</span>
-                                        {fieldConfig.textarea ? (
+                                        {fieldConfig.options ? (
+                                            <select
+                                                value={fieldValues[fieldConfig.key] || ''}
+                                                onChange={(event) => updateDetailDraftField(fieldConfig.key, event.target.value)}
+                                            >
+                                                {fieldConfig.options.map((option) => (
+                                                    <option key={option} value={option}>{option}</option>
+                                                ))}
+                                            </select>
+                                        ) : fieldConfig.textarea ? (
                                             <textarea
                                                 value={fieldValues[fieldConfig.key] || ''}
                                                 placeholder="Brak"

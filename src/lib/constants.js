@@ -21,6 +21,14 @@ export const STATUS_OPTIONS = [
     STATUS_LOST,
 ];
 
+export const DEFAULT_CSV_STATUS = 'Oczekuje na kontakt';
+export const CSV_STATUS_OPTIONS = [
+    DEFAULT_CSV_STATUS,
+    'W trakcie negocjacji',
+    'Wysłano ofertę',
+    'Sprzedane',
+];
+
 export const COLUMN_DEFINITIONS = [
     {
         id: 'pending',
@@ -88,7 +96,7 @@ export const editableFieldConfigs = [
     { key: 'Województwo', label: 'Województwo' },
     { key: 'courtsOutdoor', label: 'Korty zewnętrzne', number: true },
     { key: 'courtsIndoor', label: 'Korty wewnętrzne', number: true },
-    { key: 'status', label: 'Status z CSV' },
+    { key: 'status', label: 'Status z CSV', options: CSV_STATUS_OPTIONS },
     { key: 'Notatka', label: 'Notatka z CSV', textarea: true },
 ];
 
