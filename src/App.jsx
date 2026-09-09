@@ -779,7 +779,6 @@ export default function App() {
         ];
 
         persistPatch(clubId, {
-            callStatus: STATUS_MEETING,
             scheduledMeetings: nextMeetings,
         });
         setMeetingDraft({
@@ -2330,12 +2329,7 @@ export default function App() {
             return null;
         }
 
-        const isMeetingSelected = currentClub?.id === club.id && currentClub?.callStatus === STATUS_MEETING;
         const hasScheduledMeeting = Array.isArray(club.scheduledMeetings) && club.scheduledMeetings.some((meeting) => meeting.startsAt);
-
-        if (!isMeetingSelected && !hasScheduledMeeting) {
-            return null;
-        }
 
         return (
             <div className={`meeting-scheduler ${compact ? 'compact' : ''}`}>
@@ -2347,60 +2341,56 @@ export default function App() {
                     {hasScheduledMeeting ? <span className="status-pill green">Zapisane</span> : null}
                 </div>
 
-                {isMeetingSelected ? (
-                    <>
-                        <div className="meeting-scheduler-grid">
-                            <label className="field-group">
-                                <span>Data</span>
-                                <input
-                                    type="date"
-                                    value={meetingDraft.date}
-                                    onChange={(event) => setMeetingDraft((current) => ({ ...current, date: event.target.value }))}
-                                />
-                            </label>
-                            <label className="field-group">
-                                <span>Godzina</span>
-                                <input
-                                    type="time"
-                                    value={meetingDraft.time}
-                                    onChange={(event) => setMeetingDraft((current) => ({ ...current, time: event.target.value }))}
-                                />
-                            </label>
-                        </div>
-                        <div className="field-group">
-                            <label htmlFor="meeting-title">Tytuł spotkania</label>
-                            <input
-                                id="meeting-title"
-                                type="text"
-                                value={meetingDraft.title}
-                                onChange={(event) => setMeetingDraft((current) => ({ ...current, title: event.target.value }))}
-                                placeholder="Spotkanie - nazwa klubu"
-                            />
-                        </div>
-                        <div className="field-group">
-                            <label htmlFor="meeting-notes">Notatka do kalendarza</label>
-                            <textarea
-                                id="meeting-notes"
-                                value={meetingDraft.notes}
-                                onChange={(event) => setMeetingDraft((current) => ({ ...current, notes: event.target.value }))}
-                                placeholder="Np. demo online, link wyślę mailem"
-                                rows={compact ? 3 : 4}
-                            />
-                        </div>
-                        <div className="meeting-scheduler-actions">
-                            <button
-                                type="button"
-                                className="primary-action"
-                                onClick={() => addMeetingToClub(club.id, meetingDraft)}
-                            >
-                                Dodaj do kalendarza
-                            </button>
-                            <p className="subtle">
-                                Po zapisaniu spotkanie pojawi się nad memo i w karuzeli najbliższych terminów.
-                            </p>
-                        </div>
-                    </>
-                ) : null}
+                <div className="meeting-scheduler-grid">
+                    <label className="field-group">
+                        <span>Data</span>
+                        <input
+                            type="date"
+                            value={meetingDraft.date}
+                            onChange={(event) => setMeetingDraft((current) => ({ ...current, date: event.target.value }))}
+                        />
+                    </label>
+                    <label className="field-group">
+                        <span>Godzina</span>
+                        <input
+                            type="time"
+                            value={meetingDraft.time}
+                            onChange={(event) => setMeetingDraft((current) => ({ ...current, time: event.target.value }))}
+                        />
+                    </label>
+                </div>
+                <div className="field-group">
+                    <label htmlFor="meeting-title">Tytuł spotkania</label>
+                    <input
+                        id="meeting-title"
+                        type="text"
+                        value={meetingDraft.title}
+                        onChange={(event) => setMeetingDraft((current) => ({ ...current, title: event.target.value }))}
+                        placeholder="Spotkanie - nazwa klubu"
+                    />
+                </div>
+                <div className="field-group">
+                    <label htmlFor="meeting-notes">Notatka do kalendarza</label>
+                    <textarea
+                        id="meeting-notes"
+                        value={meetingDraft.notes}
+                        onChange={(event) => setMeetingDraft((current) => ({ ...current, notes: event.target.value }))}
+                        placeholder="Np. demo online, link wyślę mailem"
+                        rows={compact ? 3 : 4}
+                    />
+                </div>
+                <div className="meeting-scheduler-actions">
+                    <button
+                        type="button"
+                        className="primary-action"
+                        onClick={() => addMeetingToClub(club.id, meetingDraft)}
+                    >
+                        Dodaj do kalendarza
+                    </button>
+                    <p className="subtle">
+                        Po zapisaniu spotkanie pojawi się nad memo i w karuzeli najbliższych terminów.
+                    </p>
+                </div>
 
                 {hasScheduledMeeting ? (
                     <div className="timeline-list meeting-timeline">
