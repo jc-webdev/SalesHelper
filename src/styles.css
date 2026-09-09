@@ -1279,60 +1279,27 @@ button:disabled,
     gap: 8px;
 }
 
-.court-type-toggle {
+.court-type-badges {
     display: flex;
     gap: 4px;
     flex: 0 0 auto;
 }
 
-.court-type-button {
+.court-type-badge {
     width: 26px;
     height: 26px;
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
-    background: #fff;
-    color: var(--faint);
+    background: var(--blue-soft);
+    color: var(--blue-deep);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    cursor: pointer;
-    transition: transform 0.15s ease, border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
 
-.court-type-button svg {
-    width: 14px;
-    height: 14px;
-}
-
-.court-type-button:hover {
-    border-color: #b9cdda;
-    color: var(--blue-deep);
-}
-
-.court-type-button.is-active {
-    background: var(--blue);
-    border-color: var(--blue);
-    color: #fff;
-}
-
-.court-type-field {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 8px;
-}
-
-.court-type-field > span:first-child {
-    font-size: 11px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--blue-deep);
-}
-
-.court-type-label {
-    font-size: 13px;
-    color: var(--muted);
+.court-type-badge svg {
+    width: 15px;
+    height: 15px;
 }
 
 .task-meta,

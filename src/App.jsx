@@ -77,12 +77,14 @@ function IconMenu() {
     return <svg {...iconStrokeProps}><line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17" x2="20" y2="17" /></svg>;
 }
 
+const boldIconStrokeProps = { ...iconStrokeProps, strokeWidth: 2.75 };
+
 function IconHouse() {
-    return <svg {...iconStrokeProps}><path d="M3 11.5 12 4l9 7.5" /><path d="M5.5 10v9a1 1 0 0 0 1 1H10v-6h4v6h3.5a1 1 0 0 0 1-1v-9" /></svg>;
+    return <svg {...boldIconStrokeProps}><path d="M3 11.5 12 4l9 7.5" /><path d="M5.5 10v9a1 1 0 0 0 1 1H10v-6h4v6h3.5a1 1 0 0 0 1-1v-9" /></svg>;
 }
 
 function IconSun() {
-    return <svg {...iconStrokeProps}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>;
+    return <svg {...boldIconStrokeProps}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>;
 }
 
 const CAMERA_FIELDS = [
@@ -1942,13 +1944,6 @@ export default function App() {
         });
     }
 
-    function updateClubCourtType(clubId, courtType) {
-        const club = state.clubs.find((item) => item.id === clubId);
-        persistPatch(clubId, {
-            courtType: club?.courtType === courtType ? null : courtType,
-        });
-    }
-
     function handleDragStart(event, clubId) {
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/plain', clubId);
@@ -2700,29 +2695,26 @@ export default function App() {
         ? `Ścieżka: ${state.history.map((nodeId) => conversationNodes[nodeId].title).join(' → ')}`
         : 'Nowa rozmowa';
 
-    function renderCourtTypeToggle(club) {
+    function renderCourtTypeIcons(club) {
+        const hasIndoor = Number(club.courtsIndoor) > 0;
+        const hasOutdoor = Number(club.courtsOutdoor) > 0;
+
+        if (!hasIndoor && !hasOutdoor) {
+            return null;
+        }
+
         return (
-            <div className="court-type-toggle" onClick={(event) => event.stopPropagation()}>
-                <button
-                    type="button"
-                    className={`court-type-button ${club.courtType === 'indoor' ? 'is-active' : ''}`}
-                    aria-label="Oznacz jako kort wewnętrzny"
-                    aria-pressed={club.courtType === 'indoor'}
-                    title="Kort wewnętrzny"
-                    onClick={() => updateClubCourtType(club.id, 'indoor')}
-                >
-                    <IconHouse />
-                </button>
-                <button
-                    type="button"
-                    className={`court-type-button ${club.courtType === 'outdoor' ? 'is-active' : ''}`}
-                    aria-label="Oznacz jako kort zewnętrzny"
-                    aria-pressed={club.courtType === 'outdoor'}
-                    title="Kort zewnętrzny"
-                    onClick={() => updateClubCourtType(club.id, 'outdoor')}
-                >
-                    <IconSun />
-                </button>
+            <div className="court-type-badges">
+                {hasIndoor ? (
+                    <span className="court-type-badge" title={`Korty wewnętrzne: ${club.courtsIndoor}`} aria-label={`Korty wewnętrzne: ${club.courtsIndoor}`}>
+                        <IconHouse />
+                    </span>
+                ) : null}
+                {hasOutdoor ? (
+                    <span className="court-type-badge" title={`Korty zewnętrzne: ${club.courtsOutdoor}`} aria-label={`Korty zewnętrzne: ${club.courtsOutdoor}`}>
+                        <IconSun />
+                    </span>
+                ) : null}
             </div>
         );
     }
@@ -2753,7 +2745,7 @@ export default function App() {
                                 ) : null}
                             </div>
                         </div>
-                        {renderCourtTypeToggle(club)}
+                        {renderCourtTypeIcons(club)}
                     </div>
                     <div className="task-actions" onClick={(event) => event.stopPropagation()}>
                         <label className="inline-select-wrap">
@@ -2791,13 +2783,7 @@ export default function App() {
                         <div>
                             <div className="step">Szczegóły zadania</div>
                             <h2>{club['Nazwa klubu'] || 'Bez nazwy'}</h2>
-                            <label className="court-type-field">
-                                <span>Kort</span>
-                                {renderCourtTypeToggle(club)}
-                                <span className="court-type-label">
-                                    {club.courtType === 'indoor' ? 'Wewnętrzny' : club.courtType === 'outdoor' ? 'Zewnętrzny' : 'Nieoznaczony'}
-                                </span>
-                            </label>
+                            {renderCourtTypeIcons(club)}
                         </div>
                         <div className="task-buttons">
                             {website ? (
@@ -2871,7 +2857,9 @@ export default function App() {
                                             />
                                         ) : (
                                             <input
-                                                type="text"
+                                                type={fieldConfig.number ? 'number' : 'text'}
+                                                min={fieldConfig.number ? 0 : undefined}
+                                                step={fieldConfig.number ? 1 : undefined}
                                                 value={fieldValues[fieldConfig.key] || ''}
                                                 placeholder="Brak"
                                                 onChange={(event) => updateDetailDraftField(fieldConfig.key, event.target.value)}

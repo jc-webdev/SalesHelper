@@ -256,7 +256,8 @@ export function mapClubToSupabaseRow(club) {
         assigned_to: club.assignedTo || null,
         assigned_to_name: club.assignedToName || null,
         assigned_to_email: club.assignedToEmail || null,
-        court_type: club.courtType || null,
+        courts_indoor: Number(club.courtsIndoor) || 0,
+        courts_outdoor: Number(club.courtsOutdoor) || 0,
         payload: club,
     };
 }
@@ -282,7 +283,8 @@ export function mapSupabaseRowToClub(row) {
         assignedTo: row.assigned_to || payload.assignedTo || null,
         assignedToName: row.assigned_to_name || payload.assignedToName || '',
         assignedToEmail: row.assigned_to_email || payload.assignedToEmail || '',
-        courtType: row.court_type || payload.courtType || null,
+        courtsIndoor: Number(row.courts_indoor ?? payload.courtsIndoor) || 0,
+        courtsOutdoor: Number(row.courts_outdoor ?? payload.courtsOutdoor) || 0,
         notesTimeline,
         scheduledMeetings,
     };

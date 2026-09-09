@@ -86,6 +86,8 @@ export const editableFieldConfigs = [
     { key: 'Padel Single', label: 'Padel Single' },
     { key: 'Ilość kamer', label: 'Ilość kamer' },
     { key: 'Województwo', label: 'Województwo' },
+    { key: 'courtsOutdoor', label: 'Korty zewnętrzne', number: true },
+    { key: 'courtsIndoor', label: 'Korty wewnętrzne', number: true },
     { key: 'status', label: 'Status z CSV' },
     { key: 'Notatka', label: 'Notatka z CSV', textarea: true },
 ];
