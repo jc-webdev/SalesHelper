@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const createTeamMemberHandler = (await import('./api/create-team-member.js')).default;
 const teamMembersHandler = (await import('./api/team-members.js')).default;
 const sendPasswordResetHandler = (await import('./api/send-password-reset.js')).default;
+const deleteTeamMemberHandler = (await import('./api/delete-team-member.js')).default;
 
 const PORT = 8787;
 const __filename = fileURLToPath(import.meta.url);
@@ -114,6 +115,11 @@ const server = http.createServer(async (request, response) => {
 
     if (url.pathname === '/api/send-password-reset') {
         await sendPasswordResetHandler(handlerRequest, adaptResponse(response));
+        return;
+    }
+
+    if (url.pathname === '/api/delete-team-member') {
+        await deleteTeamMemberHandler(handlerRequest, adaptResponse(response));
         return;
     }
 

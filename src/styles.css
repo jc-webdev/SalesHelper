@@ -404,6 +404,12 @@ header {
     font-size: 13px;
 }
 
+.team-member-actions-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .compact-field-group {
     max-width: 320px;
 }
@@ -2119,6 +2125,16 @@ button:disabled,
     color: var(--red);
     border-color: #eeb6b6;
     background: var(--red-soft);
+}
+
+.icon-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.icon-button:disabled:hover {
+    transform: none;
+    box-shadow: none;
 }
 
 .meeting-delete-confirmation {

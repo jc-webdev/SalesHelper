@@ -1325,6 +1325,51 @@ export default function App() {
         await refreshTeamMembers();
     }
 
+    async function handleDeleteTeamMember(member) {
+        if (!session?.access_token) {
+            setAdminMessage('Brak aktywnej sesji. Zaloguj się ponownie.');
+            return;
+        }
+
+        if (member.id === session?.user?.id) {
+            setAdminMessage('Nie możesz usunąć własnego konta.');
+            return;
+        }
+
+        const confirmed = window.confirm(`Usunąć konto ${member.full_name || member.email}? Tej operacji nie można cofnąć.`);
+        if (!confirmed) {
+            return;
+        }
+
+        setAdminMessage('');
+
+        const response = await fetch(buildApiUrl('/api/delete-team-member'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ memberId: member.id }),
+        });
+
+        const responseText = await response.text();
+        const payload = responseText ? (() => {
+            try {
+                return JSON.parse(responseText);
+            } catch (error) {
+                return { error: responseText };
+            }
+        })() : {};
+
+        if (!response.ok) {
+            setAdminMessage(payload.error || 'Nie udało się usunąć konta.');
+            return;
+        }
+
+        setAdminMessage(`Usunięto konto ${member.full_name || member.email}.`);
+        await refreshTeamMembers();
+    }
+
     async function handleSendPasswordReset(memberEmail) {
         if (!session?.access_token) {
             setAdminMessage('Brak aktywnej sesji. Zaloguj się ponownie.');
@@ -1635,13 +1680,25 @@ export default function App() {
                                                     <IconPencil />
                                                 </button>
                                             )}
-                                            <button
-                                                type="button"
-                                                className="secondary team-reset-button"
-                                                onClick={() => handleSendPasswordReset(member.email)}
-                                            >
-                                                Wyślij link/reset hasła
-                                            </button>
+                                            <div className="team-member-actions-row">
+                                                <button
+                                                    type="button"
+                                                    className="secondary team-reset-button"
+                                                    onClick={() => handleSendPasswordReset(member.email)}
+                                                >
+                                                    Wyślij link/reset hasła
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="icon-button danger"
+                                                    aria-label="Usuń członka zespołu"
+                                                    title="Usuń członka zespołu"
+                                                    disabled={member.id === session?.user?.id}
+                                                    onClick={() => handleDeleteTeamMember(member)}
+                                                >
+                                                    <IconTrash />
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 );
