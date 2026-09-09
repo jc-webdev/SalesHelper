@@ -1302,6 +1302,11 @@ button:disabled,
     height: 15px;
 }
 
+.court-type-badge--indoor {
+    background: var(--green-soft);
+    color: var(--green-deep);
+}
+
 .task-meta,
 .conversation-context {
     display: flex;
@@ -1513,6 +1518,29 @@ button:disabled,
     font-size: 14px;
     line-height: 1.5;
     color: var(--ink);
+}
+
+.detail-box-subrow {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line-soft);
+}
+
+.detail-box-subrow span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink);
+}
+
+.detail-box-subrow svg {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
 }
 
 .detail-box textarea {

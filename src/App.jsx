@@ -2706,7 +2706,7 @@ export default function App() {
         return (
             <div className="court-type-badges">
                 {hasIndoor ? (
-                    <span className="court-type-badge" title={`Korty wewnętrzne: ${club.courtsIndoor}`} aria-label={`Korty wewnętrzne: ${club.courtsIndoor}`}>
+                    <span className="court-type-badge court-type-badge--indoor" title={`Korty wewnętrzne: ${club.courtsIndoor}`} aria-label={`Korty wewnętrzne: ${club.courtsIndoor}`}>
                         <IconHouse />
                     </span>
                 ) : null}
@@ -2905,6 +2905,10 @@ export default function App() {
                         <div className="detail-box">
                             <h3>Padel double / single</h3>
                             <p>{club['Padel double'] || '0'} / {club['Padel Single'] || '0'}</p>
+                            <div className="detail-box-subrow">
+                                <span><IconSun /> Zewnętrzne: {Number(club.courtsOutdoor) || 0}</span>
+                                <span><IconHouse /> Wewnętrzne: {Number(club.courtsIndoor) || 0}</span>
+                            </div>
                         </div>
                         <div className="detail-box">
                             <h3>Ilość kamer</h3>
