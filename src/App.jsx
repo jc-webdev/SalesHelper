@@ -173,6 +173,7 @@ export default function App() {
     const [pendingMeetingDelete, setPendingMeetingDelete] = useState(null);
     const [meetingEditDraft, setMeetingEditDraft] = useState({ date: '', time: '', title: '', notes: '' });
     const meetingsCarouselRef = useRef(null);
+    const lastSavedClubsRef = useRef(new Map());
     const detailStatusSelectRef = useRef(null);
 
     useEffect(() => {
@@ -249,6 +250,7 @@ export default function App() {
                 setSharedMemos([]);
                 setIsMemoComposerOpen(false);
                 setMemoDraft('');
+                lastSavedClubsRef.current = new Map();
                 setCameraInventory({ available: 0, ordered: 0, toInstall: 0 });
                 setEditingCameraField(null);
                 setCalendarInitialized(false);
@@ -310,6 +312,14 @@ export default function App() {
             const loadedClubs = normalizeLoadedClubs((clubs || []).map(mapSupabaseRowToClub));
             const routeClubExists = routeClubId ? loadedClubs.some((club) => club.id === routeClubId) : false;
             const resolvedView = initialRouteState.view === 'conversation' && routeClubExists ? 'conversation' : 'list';
+
+            // Baseline for the save effect below: only clubs that actually
+            // differ from what's in the database get re-sent, so a save
+            // triggered by editing one club never clobbers a change another
+            // device made to a different club in the meantime (this device's
+            // in-memory copy of that other club is stale by definition,
+            // since clubs are only fetched once per login, not live-synced).
+            lastSavedClubsRef.current = new Map(loadedClubs.map((club) => [club.id, JSON.stringify(club)]));
 
             setState((currentState) => ({
                 ...currentState,
@@ -381,15 +391,34 @@ export default function App() {
         }
 
         const timer = window.setTimeout(async () => {
+            // Only upsert clubs whose content actually changed since the
+            // last successful save — never the whole array. Saving every
+            // club on every edit meant that as soon as *anyone* on the team
+            // saved (even for an unrelated club), it silently overwrote
+            // whatever any other device/tab had changed in the meantime
+            // with this device's stale in-memory copy, since clubs are only
+            // fetched once at login rather than kept live-synced.
+            const changedClubs = state.clubs.filter((club) => {
+                const snapshot = JSON.stringify(club);
+                return lastSavedClubsRef.current.get(club.id) !== snapshot;
+            });
+
+            if (!changedClubs.length) {
+                return;
+            }
+
             const { error } = await supabase
                 .from(SUPABASE_TABLE)
-                .upsert(state.clubs.map(mapClubToSupabaseRow), { onConflict: 'id' });
+                .upsert(changedClubs.map(mapClubToSupabaseRow), { onConflict: 'id' });
 
             if (error) {
                 setCloudMessage('Błąd zapisu do Supabase');
                 return;
             }
 
+            changedClubs.forEach((club) => {
+                lastSavedClubsRef.current.set(club.id, JSON.stringify(club));
+            });
             setCloudMessage('Zapisano w Supabase');
         }, 700);
 
