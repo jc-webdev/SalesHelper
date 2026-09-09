@@ -2073,8 +2073,9 @@ export default function App() {
                 <div className="camera-inventory-grid">
                     {CAMERA_FIELDS.map((field) => (
                         <div key={field.key} className="camera-box">
-                            <div className="camera-box-top">
-                                <span className="camera-box-label">{field.label}</span>
+                            <span className="camera-box-label">{field.label}</span>
+                            <div className="camera-box-right">
+                                <span className="camera-box-value">{cameraInventory[field.key]}</span>
                                 <button
                                     type="button"
                                     className="icon-button camera-edit-button"
@@ -2084,7 +2085,6 @@ export default function App() {
                                     <IconPencil />
                                 </button>
                             </div>
-                            <div className="camera-box-value">{cameraInventory[field.key]}</div>
 
                             {editingCameraField === field.key ? (
                                 <form className="camera-edit-popover" onSubmit={handleSaveCameraCount}>
@@ -3074,8 +3074,8 @@ export default function App() {
                                 </div>
 
                                 <div className="list-meetings-right">
-                                    {renderCameraInventoryPanel()}
                                     {renderMeetingCalendarPanel(upcomingMeetings)}
+                                    {renderCameraInventoryPanel()}
                                 </div>
                             </div>
 
