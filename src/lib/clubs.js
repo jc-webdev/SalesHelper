@@ -253,6 +253,9 @@ export function mapClubToSupabaseRow(club) {
         call_status: normalizeCallStatus(club.callStatus || DEFAULT_STATUS),
         planned_today: Boolean(club.plannedToday),
         call_note: club.callNote || '',
+        assigned_to: club.assignedTo || null,
+        assigned_to_name: club.assignedToName || null,
+        assigned_to_email: club.assignedToEmail || null,
         payload: club,
     };
 }
@@ -275,6 +278,9 @@ export function mapSupabaseRowToClub(row) {
         callStatus: normalizeCallStatus(row.call_status || payload.callStatus || DEFAULT_STATUS),
         plannedToday: normalizePlannedToday(row.planned_today ?? payload.plannedToday ?? payload.planned_today, row.call_status || payload.callStatus || DEFAULT_STATUS),
         callNote: row.call_note || payload.callNote || '',
+        assignedTo: row.assigned_to || payload.assignedTo || null,
+        assignedToName: row.assigned_to_name || payload.assignedToName || '',
+        assignedToEmail: row.assigned_to_email || payload.assignedToEmail || '',
         notesTimeline,
         scheduledMeetings,
     };

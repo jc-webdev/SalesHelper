@@ -77,6 +77,12 @@ function IconMenu() {
     return <svg {...iconStrokeProps}><line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17" x2="20" y2="17" /></svg>;
 }
 
+const CAMERA_FIELDS = [
+    { key: 'available', dbColumn: 'available', label: 'Kamery dostępne' },
+    { key: 'ordered', dbColumn: 'ordered', label: 'Kamery zamówione, czekamy' },
+    { key: 'toInstall', dbColumn: 'to_install', label: 'Kamery do zainstalowania' },
+];
+
 const initialRouteState = getRouteStateFromLocation();
 
 function installViewportDebugOverlay() {
@@ -137,6 +143,12 @@ export default function App() {
     const [memberNameDraft, setMemberNameDraft] = useState('');
     const [activePanel, setActivePanel] = useState('board');
     const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+    const [cameraInventory, setCameraInventory] = useState({ available: 0, ordered: 0, toInstall: 0 });
+    const [teamRoster, setTeamRoster] = useState([]);
+    const [assigneeFilter, setAssigneeFilter] = useState('all');
+    const [editingCameraField, setEditingCameraField] = useState(null);
+    const [cameraValueDraft, setCameraValueDraft] = useState('');
+    const [cameraUpdateError, setCameraUpdateError] = useState('');
     const [isDetailEditing, setIsDetailEditing] = useState(false);
     const [detailDraft, setDetailDraft] = useState(null);
     const [workflowInfoOpen, setWorkflowInfoOpen] = useState(false);
@@ -163,6 +175,7 @@ export default function App() {
     const [pendingMeetingDelete, setPendingMeetingDelete] = useState(null);
     const [meetingEditDraft, setMeetingEditDraft] = useState({ date: '', time: '', title: '', notes: '' });
     const meetingsCarouselRef = useRef(null);
+    const lastSavedClubsRef = useRef(new Map());
     const detailStatusSelectRef = useRef(null);
 
     useEffect(() => {
@@ -239,6 +252,11 @@ export default function App() {
                 setSharedMemos([]);
                 setIsMemoComposerOpen(false);
                 setMemoDraft('');
+                lastSavedClubsRef.current = new Map();
+                setCameraInventory({ available: 0, ordered: 0, toInstall: 0 });
+                setEditingCameraField(null);
+                setTeamRoster([]);
+                setAssigneeFilter('all');
                 setCalendarInitialized(false);
                 setCalendarWeekStart(getStartOfWeek(new Date()));
                 resetMeetingDraft(null);
@@ -254,11 +272,15 @@ export default function App() {
             let profileError;
             let clubs;
             let clubsError;
+            let cameraInventoryRow;
+            let roster;
 
             try {
-                ([{ data: profile, error: profileError }, { data: clubs, error: clubsError }] = await Promise.all([
+                ([{ data: profile, error: profileError }, { data: clubs, error: clubsError }, { data: cameraInventoryRow }, { data: roster }] = await Promise.all([
                     supabase.from('profiles').select('*').eq('id', session.user.id).single(),
                     supabase.from(SUPABASE_TABLE).select('*').order('updated_at', { ascending: false }),
+                    supabase.from('camera_inventory').select('*').eq('id', 'singleton').single(),
+                    supabase.from('profiles').select('id, email, full_name').order('full_name', { ascending: true }),
                 ]));
             } catch (networkError) {
                 // A dropped connection (e.g. right after switching apps to
@@ -297,6 +319,14 @@ export default function App() {
             const routeClubExists = routeClubId ? loadedClubs.some((club) => club.id === routeClubId) : false;
             const resolvedView = initialRouteState.view === 'conversation' && routeClubExists ? 'conversation' : 'list';
 
+            // Baseline for the save effect below: only clubs that actually
+            // differ from what's in the database get re-sent, so a save
+            // triggered by editing one club never clobbers a change another
+            // device made to a different club in the meantime (this device's
+            // in-memory copy of that other club is stale by definition,
+            // since clubs are only fetched once per login, not live-synced).
+            lastSavedClubsRef.current = new Map(loadedClubs.map((club) => [club.id, JSON.stringify(club)]));
+
             setState((currentState) => ({
                 ...currentState,
                 view: resolvedView,
@@ -308,6 +338,16 @@ export default function App() {
             }));
             setCloudMessage('Połączono z Supabase');
             setClubsLoading(false);
+
+            if (cameraInventoryRow) {
+                setCameraInventory({
+                    available: cameraInventoryRow.available ?? 0,
+                    ordered: cameraInventoryRow.ordered ?? 0,
+                    toInstall: cameraInventoryRow.to_install ?? 0,
+                });
+            }
+
+            setTeamRoster(Array.isArray(roster) ? roster : []);
 
             if (resolvedProfile?.is_admin) {
                 await refreshTeamMembers(session.access_token, true);
@@ -359,15 +399,34 @@ export default function App() {
         }
 
         const timer = window.setTimeout(async () => {
+            // Only upsert clubs whose content actually changed since the
+            // last successful save — never the whole array. Saving every
+            // club on every edit meant that as soon as *anyone* on the team
+            // saved (even for an unrelated club), it silently overwrote
+            // whatever any other device/tab had changed in the meantime
+            // with this device's stale in-memory copy, since clubs are only
+            // fetched once at login rather than kept live-synced.
+            const changedClubs = state.clubs.filter((club) => {
+                const snapshot = JSON.stringify(club);
+                return lastSavedClubsRef.current.get(club.id) !== snapshot;
+            });
+
+            if (!changedClubs.length) {
+                return;
+            }
+
             const { error } = await supabase
                 .from(SUPABASE_TABLE)
-                .upsert(state.clubs.map(mapClubToSupabaseRow), { onConflict: 'id' });
+                .upsert(changedClubs.map(mapClubToSupabaseRow), { onConflict: 'id' });
 
             if (error) {
                 setCloudMessage('Błąd zapisu do Supabase');
                 return;
             }
 
+            changedClubs.forEach((club) => {
+                lastSavedClubsRef.current.set(club.id, JSON.stringify(club));
+            });
             setCloudMessage('Zapisano w Supabase');
         }, 700);
 
@@ -375,6 +434,65 @@ export default function App() {
             window.clearTimeout(timer);
         };
     }, [clubsLoading, session?.user?.id, state.clubs]);
+
+    useEffect(() => {
+        if (!session?.user?.id || !isSupabaseConfigured || !supabase) {
+            return;
+        }
+
+        const channel = supabase
+            .channel('oqla-live-sync')
+            .on('postgres_changes', { event: '*', schema: 'public', table: SUPABASE_TABLE }, (payload) => {
+                if (payload.eventType === 'DELETE') {
+                    const deletedId = payload.old?.id;
+                    if (!deletedId) {
+                        return;
+                    }
+                    lastSavedClubsRef.current.delete(deletedId);
+                    setState((current) => ({
+                        ...current,
+                        clubs: current.clubs.filter((club) => club.id !== deletedId),
+                    }));
+                    return;
+                }
+
+                const incoming = normalizeLoadedClubs([mapSupabaseRowToClub(payload.new)])[0];
+                // Reflects what the database now holds, so this is also the
+                // new save baseline — otherwise this device's own next edit
+                // to some OTHER club would see this row as "changed" against
+                // its old baseline and needlessly (harmlessly, but wastefully)
+                // re-send it too.
+                lastSavedClubsRef.current.set(incoming.id, JSON.stringify(incoming));
+                setState((current) => {
+                    const exists = current.clubs.some((club) => club.id === incoming.id);
+                    return {
+                        ...current,
+                        clubs: exists
+                            ? current.clubs.map((club) => (club.id === incoming.id ? incoming : club))
+                            : [incoming, ...current.clubs],
+                    };
+                });
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'shared_memos' }, () => {
+                refreshSharedMemos();
+            })
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'camera_inventory', filter: 'id=eq.singleton' }, (payload) => {
+                const row = payload.new;
+                if (!row) {
+                    return;
+                }
+                setCameraInventory({
+                    available: row.available ?? 0,
+                    ordered: row.ordered ?? 0,
+                    toInstall: row.to_install ?? 0,
+                });
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [session?.user?.id]);
 
     const currentClub = useMemo(() => {
         return state.clubs.find((club) => club.id === state.activeClubId)
@@ -453,11 +571,22 @@ export default function App() {
 
     const filteredClubs = useMemo(() => {
         const query = normalizeText(clubSearchQuery);
-        if (!query) {
-            return state.clubs;
-        }
 
         return state.clubs.filter((club) => {
+            if (assigneeFilter === 'mine' && club.assignedTo !== session?.user?.id) {
+                return false;
+            }
+            if (assigneeFilter === 'unassigned' && club.assignedTo) {
+                return false;
+            }
+            if (assigneeFilter !== 'all' && assigneeFilter !== 'mine' && assigneeFilter !== 'unassigned' && club.assignedTo !== assigneeFilter) {
+                return false;
+            }
+
+            if (!query) {
+                return true;
+            }
+
             const haystack = [
                 club['Nazwa klubu'],
                 club['adres strony'],
@@ -468,11 +597,12 @@ export default function App() {
                 club.status,
                 club.callStatus,
                 club.Notatka,
+                club.assignedToName,
             ].map((value) => normalizeText(value)).join(' ');
 
             return haystack.includes(query);
         });
-    }, [clubSearchQuery, state.clubs]);
+    }, [assigneeFilter, clubSearchQuery, session?.user?.id, state.clubs]);
 
     const visibleBoardColumns = useMemo(() => {
         const columns = COLUMN_DEFINITIONS.map((column) => ({
@@ -757,7 +887,6 @@ export default function App() {
         ];
 
         persistPatch(clubId, {
-            callStatus: STATUS_MEETING,
             scheduledMeetings: nextMeetings,
         });
         setMeetingDraft({
@@ -1065,6 +1194,50 @@ export default function App() {
 
         if (!error) {
             await refreshSharedMemos();
+        }
+    }
+
+    function openCameraEditor(fieldKey) {
+        setEditingCameraField(fieldKey);
+        setCameraValueDraft('');
+        setCameraUpdateError('');
+    }
+
+    function closeCameraEditor() {
+        setEditingCameraField(null);
+        setCameraValueDraft('');
+        setCameraUpdateError('');
+    }
+
+    async function handleSaveCameraCount(event) {
+        event.preventDefault();
+
+        const field = CAMERA_FIELDS.find((item) => item.key === editingCameraField);
+        if (!field) {
+            return;
+        }
+
+        const trimmed = cameraValueDraft.trim();
+        if (!/^\d+$/.test(trimmed)) {
+            setCameraUpdateError('Podaj liczbę całkowitą, nie mniejszą niż 0.');
+            return;
+        }
+
+        const newValue = Number(trimmed);
+        setCameraInventory((current) => ({ ...current, [field.key]: newValue }));
+        closeCameraEditor();
+
+        if (!session?.user || !supabase) {
+            return;
+        }
+
+        const { error } = await supabase
+            .from('camera_inventory')
+            .update({ [field.dbColumn]: newValue, updated_by: session.user.email })
+            .eq('id', 'singleton');
+
+        if (error) {
+            setCloudMessage('Błąd zapisu liczby kamer');
         }
     }
 
@@ -1752,6 +1925,15 @@ export default function App() {
         persistPatch(clubId, patch);
     }
 
+    function updateClubAssignment(clubId, userId) {
+        const member = teamRoster.find((item) => item.id === userId);
+        persistPatch(clubId, {
+            assignedTo: member?.id || null,
+            assignedToName: member?.full_name || '',
+            assignedToEmail: member?.email || '',
+        });
+    }
+
     function handleDragStart(event, clubId) {
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/plain', clubId);
@@ -1999,6 +2181,64 @@ export default function App() {
         );
     }
 
+    function renderCameraInventoryPanel() {
+        return (
+            <div className="card compact camera-inventory-card">
+                <div className="step">Sprzęt</div>
+                <h2>Kamery</h2>
+                <div className="camera-inventory-grid">
+                    {CAMERA_FIELDS.map((field) => (
+                        <div key={field.key} className="camera-box">
+                            <span className="camera-box-label">{field.label}</span>
+                            <div className="camera-box-right">
+                                <span className="camera-box-value">{cameraInventory[field.key]}</span>
+                                <button
+                                    type="button"
+                                    className="icon-button camera-edit-button"
+                                    aria-label={`Zmień wartość: ${field.label}`}
+                                    onClick={() => openCameraEditor(field.key)}
+                                >
+                                    <IconPencil />
+                                </button>
+                            </div>
+
+                            {editingCameraField === field.key ? (
+                                <form className="camera-edit-popover" onSubmit={handleSaveCameraCount}>
+                                    <span className="camera-edit-current">Obecna wartość: {cameraInventory[field.key]}</span>
+                                    <label className="field-group compact-field-group">
+                                        <span>Podaj nową wartość</span>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="1"
+                                            inputMode="numeric"
+                                            autoFocus
+                                            value={cameraValueDraft}
+                                            onChange={(event) => {
+                                                setCameraValueDraft(event.target.value);
+                                                setCameraUpdateError('');
+                                            }}
+                                            placeholder="np. 12"
+                                        />
+                                    </label>
+                                    {cameraUpdateError ? <p className="error-message">{cameraUpdateError}</p> : null}
+                                    <div className="camera-edit-actions">
+                                        <button type="submit" className="primary-action" disabled={cameraValueDraft.trim() === ''}>
+                                            Zapisz
+                                        </button>
+                                        <button type="button" className="secondary" onClick={closeCameraEditor}>
+                                            Anuluj
+                                        </button>
+                                    </div>
+                                </form>
+                            ) : null}
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
     function renderMeetingCalendarPanel(meetings) {
         const weekDates = Array.from({ length: 7 }, (_, index) => addDays(getStartOfWeek(calendarWeekStart), index));
         const meetingsByDay = new Map();
@@ -2206,12 +2446,7 @@ export default function App() {
             return null;
         }
 
-        const isMeetingSelected = currentClub?.id === club.id && currentClub?.callStatus === STATUS_MEETING;
         const hasScheduledMeeting = Array.isArray(club.scheduledMeetings) && club.scheduledMeetings.some((meeting) => meeting.startsAt);
-
-        if (!isMeetingSelected && !hasScheduledMeeting) {
-            return null;
-        }
 
         return (
             <div className={`meeting-scheduler ${compact ? 'compact' : ''}`}>
@@ -2223,60 +2458,56 @@ export default function App() {
                     {hasScheduledMeeting ? <span className="status-pill green">Zapisane</span> : null}
                 </div>
 
-                {isMeetingSelected ? (
-                    <>
-                        <div className="meeting-scheduler-grid">
-                            <label className="field-group">
-                                <span>Data</span>
-                                <input
-                                    type="date"
-                                    value={meetingDraft.date}
-                                    onChange={(event) => setMeetingDraft((current) => ({ ...current, date: event.target.value }))}
-                                />
-                            </label>
-                            <label className="field-group">
-                                <span>Godzina</span>
-                                <input
-                                    type="time"
-                                    value={meetingDraft.time}
-                                    onChange={(event) => setMeetingDraft((current) => ({ ...current, time: event.target.value }))}
-                                />
-                            </label>
-                        </div>
-                        <div className="field-group">
-                            <label htmlFor="meeting-title">Tytuł spotkania</label>
-                            <input
-                                id="meeting-title"
-                                type="text"
-                                value={meetingDraft.title}
-                                onChange={(event) => setMeetingDraft((current) => ({ ...current, title: event.target.value }))}
-                                placeholder="Spotkanie - nazwa klubu"
-                            />
-                        </div>
-                        <div className="field-group">
-                            <label htmlFor="meeting-notes">Notatka do kalendarza</label>
-                            <textarea
-                                id="meeting-notes"
-                                value={meetingDraft.notes}
-                                onChange={(event) => setMeetingDraft((current) => ({ ...current, notes: event.target.value }))}
-                                placeholder="Np. demo online, link wyślę mailem"
-                                rows={compact ? 3 : 4}
-                            />
-                        </div>
-                        <div className="meeting-scheduler-actions">
-                            <button
-                                type="button"
-                                className="primary-action"
-                                onClick={() => addMeetingToClub(club.id, meetingDraft)}
-                            >
-                                Dodaj do kalendarza
-                            </button>
-                            <p className="subtle">
-                                Po zapisaniu spotkanie pojawi się nad memo i w karuzeli najbliższych terminów.
-                            </p>
-                        </div>
-                    </>
-                ) : null}
+                <div className="meeting-scheduler-grid">
+                    <label className="field-group">
+                        <span>Data</span>
+                        <input
+                            type="date"
+                            value={meetingDraft.date}
+                            onChange={(event) => setMeetingDraft((current) => ({ ...current, date: event.target.value }))}
+                        />
+                    </label>
+                    <label className="field-group">
+                        <span>Godzina</span>
+                        <input
+                            type="time"
+                            value={meetingDraft.time}
+                            onChange={(event) => setMeetingDraft((current) => ({ ...current, time: event.target.value }))}
+                        />
+                    </label>
+                </div>
+                <div className="field-group">
+                    <label htmlFor="meeting-title">Tytuł spotkania</label>
+                    <input
+                        id="meeting-title"
+                        type="text"
+                        value={meetingDraft.title}
+                        onChange={(event) => setMeetingDraft((current) => ({ ...current, title: event.target.value }))}
+                        placeholder="Spotkanie - nazwa klubu"
+                    />
+                </div>
+                <div className="field-group">
+                    <label htmlFor="meeting-notes">Notatka do kalendarza</label>
+                    <textarea
+                        id="meeting-notes"
+                        value={meetingDraft.notes}
+                        onChange={(event) => setMeetingDraft((current) => ({ ...current, notes: event.target.value }))}
+                        placeholder="Np. demo online, link wyślę mailem"
+                        rows={compact ? 3 : 4}
+                    />
+                </div>
+                <div className="meeting-scheduler-actions">
+                    <button
+                        type="button"
+                        className="primary-action"
+                        onClick={() => addMeetingToClub(club.id, meetingDraft)}
+                    >
+                        Dodaj do kalendarza
+                    </button>
+                    <p className="subtle">
+                        Po zapisaniu spotkanie pojawi się nad memo i w karuzeli najbliższych terminów.
+                    </p>
+                </div>
 
                 {hasScheduledMeeting ? (
                     <div className="timeline-list meeting-timeline">
@@ -2474,6 +2705,9 @@ export default function App() {
                         <div className="task-meta">
                             <span className={`status-pill ${statusTone}`}>{getCompactCallStatusLabel(club.callStatus)}</span>
                             <span className={`status-pill ${csvTone}`}>{club.status || 'Brak statusu z CSV'}</span>
+                            {club.assignedToName ? (
+                                <span className="status-pill assignee-pill">{getContactFirstName(club.assignedToName)}</span>
+                            ) : null}
                         </div>
                     </div>
                     <div className="task-actions" onClick={(event) => event.stopPropagation()}>
@@ -2532,6 +2766,21 @@ export default function App() {
                                     {STATUS_OPTIONS.map((statusOption) => (
                                         <option key={statusOption} value={statusOption}>
                                             {statusOption}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            <label className="detail-status-wrap">
+                                <span>Przypisany do</span>
+                                <select
+                                    className="status-select"
+                                    value={club.assignedTo || ''}
+                                    onChange={(event) => updateClubAssignment(club.id, event.target.value)}
+                                >
+                                    <option value="">Nieprzypisany</option>
+                                    {teamRoster.map((member) => (
+                                        <option key={member.id} value={member.id}>
+                                            {member.full_name || member.email}
                                         </option>
                                     ))}
                                 </select>
@@ -2949,7 +3198,10 @@ export default function App() {
                                     </div>
                                 </div>
 
-                                {renderMeetingCalendarPanel(upcomingMeetings)}
+                                <div className="list-meetings-right">
+                                    {renderMeetingCalendarPanel(upcomingMeetings)}
+                                    {renderCameraInventoryPanel()}
+                                </div>
                             </div>
 
                             <div className="card compact board-search-card">
@@ -2967,6 +3219,21 @@ export default function App() {
                                                 Wyczyść
                                             </button>
                                         ) : null}
+                                        <select
+                                            className="assignee-filter-select"
+                                            value={assigneeFilter}
+                                            onChange={(event) => setAssigneeFilter(event.target.value)}
+                                            aria-label="Filtruj po przypisanej osobie"
+                                        >
+                                            <option value="all">Wszystkie taski</option>
+                                            <option value="mine">Moje taski</option>
+                                            <option value="unassigned">Nieprzypisane</option>
+                                            {teamRoster.map((member) => (
+                                                <option key={member.id} value={member.id}>
+                                                    {member.full_name || member.email}
+                                                </option>
+                                            ))}
+                                        </select>
                                     </div>
                                     <span className="small board-search-count">
                                         {filteredClubs.length} / {state.clubs.length}
