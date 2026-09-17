@@ -21,6 +21,7 @@ export function normalizeScheduledMeetings(meetings) {
                     startsAt: '',
                     notes: '',
                     createdAt: new Date().toISOString(),
+                    completed: false,
                 } : null;
             }
 
@@ -37,6 +38,7 @@ export function normalizeScheduledMeetings(meetings) {
                 notes: String(meeting?.notes || '').trim(),
                 createdAt: meeting?.createdAt || meeting?.created_at || new Date().toISOString(),
                 durationMinutes: Number(meeting?.durationMinutes || meeting?.duration || 30) || 30,
+                completed: Boolean(meeting?.completed),
                 clubId: meeting?.clubId || '',
                 clubName: meeting?.clubName || '',
             contactName: meeting?.contactName || '',

@@ -640,8 +640,9 @@ export default function App() {
                 contactName: club['Imie i nazwisko kontaktu'] || [club['mail kontaktowy 1'], club['mail kontaktowy 2']]
                     .map((value) => String(value || '').trim()).find(Boolean) || '',
                 callStatus: club.callStatus || DEFAULT_STATUS,
+                isOverdue: Boolean(meeting.startsAt) && !meeting.completed && new Date(meeting.startsAt).getTime() < now,
             })) : []))
-            .filter((meeting) => meeting.startsAt && new Date(meeting.startsAt).getTime() >= now - (60 * 60 * 1000))
+            .filter((meeting) => meeting.startsAt && !meeting.completed)
             .sort((left, right) => new Date(left.startsAt) - new Date(right.startsAt))
             .slice(0, 8);
     }, [state.clubs]);
@@ -1029,6 +1030,28 @@ export default function App() {
         }));
         setEditingMeetingId(null);
         setMeetingEditDraft({ date: '', time: '', title: '', notes: '' });
+    }
+
+    function toggleMeetingCompleted(clubId, meetingId) {
+        if (!clubId || !meetingId) {
+            return;
+        }
+
+        setState((currentState) => ({
+            ...currentState,
+            clubs: currentState.clubs.map((club) => {
+                if (club.id !== clubId) {
+                    return club;
+                }
+
+                return {
+                    ...club,
+                    scheduledMeetings: (Array.isArray(club.scheduledMeetings) ? club.scheduledMeetings : []).map((meeting) => (
+                        meeting.id === meetingId ? { ...meeting, completed: !meeting.completed } : meeting
+                    )),
+                };
+            }),
+        }));
     }
 
     function deleteMeetingFromClub(clubId, meetingId) {
@@ -2211,9 +2234,9 @@ export default function App() {
                     onPointerCancel={handleCarouselPointerUp}
                 >
                     {meetings.map((meeting) => (
-                        <article key={meeting.id} className="meeting-strip-card">
+                        <article key={meeting.id} className={`meeting-strip-card ${meeting.isOverdue ? 'is-overdue' : ''}`}>
                             <div className="meeting-strip-card-top">
-                                <span className="status-pill green">Spotkanie</span>
+                                <span className={`status-pill ${meeting.isOverdue ? 'red' : 'green'}`}>{meeting.isOverdue ? 'Po terminie' : 'Spotkanie'}</span>
                                 <span className="meeting-strip-time">{formatMeetingWhen(meeting.startsAt)}</span>
                             </div>
                             <h3>{meeting.clubName}</h3>
@@ -2381,18 +2404,19 @@ export default function App() {
                         const key = formatLocalDateKey(date);
                         const dayMeetings = meetingsByDay.get(key) || [];
                         const isSelected = selectedCalendarDay === key;
+                        const hasOverdueMeeting = dayMeetings.some((meeting) => meeting.isOverdue);
 
                         return (
                             <button
                                 key={key}
                                 type="button"
-                                className={`calendar-day ${isSelected ? 'is-selected' : ''} ${dayMeetings.length ? 'has-meetings' : ''}`}
+                                className={`calendar-day ${isSelected ? 'is-selected' : ''} ${dayMeetings.length ? 'has-meetings' : ''} ${hasOverdueMeeting ? 'has-overdue-meetings' : ''}`}
                                 onClick={() => dayMeetings.length && setSelectedCalendarDay(key)}
                                 disabled={!dayMeetings.length}
                                 aria-label={dayMeetings.length ? `${dayMeetings.length} spotkań ${date.toLocaleDateString('pl-PL')}` : `Brak spotkań ${date.toLocaleDateString('pl-PL')}`}
                             >
                                 <span className="calendar-day-number">{formatCalendarDayLabel(date)}</span>
-                                {dayMeetings.length ? <span className="calendar-badge">{dayMeetings.length}</span> : null}
+                                {dayMeetings.length ? <span className={`calendar-badge ${hasOverdueMeeting ? 'is-overdue' : ''}`}>{dayMeetings.length}</span> : null}
                             </button>
                         );
                     })}
@@ -2429,9 +2453,9 @@ export default function App() {
                                     const isEditing = editingMeetingId === meeting.id;
 
                                     return (
-                                        <article key={meeting.id} className="calendar-meeting-item">
+                                        <article key={meeting.id} className={`calendar-meeting-item ${meeting.isOverdue ? 'is-overdue' : ''}`}>
                                             <div className="calendar-meeting-top">
-                                                <span className="status-pill green">Spotkanie</span>
+                                                <span className={`status-pill ${meeting.isOverdue ? 'red' : 'green'}`}>{meeting.isOverdue ? 'Po terminie' : 'Spotkanie'}</span>
                                                 <span className="meeting-strip-time">{new Date(meeting.startsAt).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}</span>
                                             </div>
                                             <h3>{meeting.clubName || 'Klub'}</h3>
@@ -2609,13 +2633,19 @@ export default function App() {
                             .map((meeting) => {
                                 const canEdit = canManageMeeting(meeting);
                                 const isEditing = editingMeetingId === meeting.id;
+                                const isOverdue = !meeting.completed && new Date(meeting.startsAt).getTime() < Date.now();
 
                                 return (
-                                    <article key={meeting.id} className="timeline-item meeting-item">
+                                    <article key={meeting.id} className={`timeline-item meeting-item ${meeting.completed ? 'is-completed' : ''} ${isOverdue ? 'is-overdue' : ''}`}>
                                         <div className="timeline-item-head">
                                             <strong>{meeting.title}</strong>
                                             <span>{formatMeetingWhen(meeting.startsAt)}</span>
                                         </div>
+                                        {meeting.completed ? (
+                                            <span className="status-pill green">Odbyło się</span>
+                                        ) : isOverdue ? (
+                                            <span className="status-pill red">Po terminie</span>
+                                        ) : null}
                                         {isEditing ? (
                                             <div className="meeting-edit-form">
                                                 <div className="meeting-scheduler-grid">
@@ -2671,6 +2701,15 @@ export default function App() {
                                                 <p>{meeting.notes || 'Brak dodatkowych notatek.'}</p>
                                                 {canEdit ? (
                                                     <div className="meeting-item-actions">
+                                                        <button
+                                                            type="button"
+                                                            className={`icon-button success ${meeting.completed ? 'is-active' : ''}`}
+                                                            aria-label={meeting.completed ? 'Odznacz jako odbyte' : 'Oznacz jako odbyło się'}
+                                                            title={meeting.completed ? 'Odznacz jako odbyte' : 'Oznacz jako odbyło się'}
+                                                            onClick={() => toggleMeetingCompleted(club.id, meeting.id)}
+                                                        >
+                                                            <IconCheck />
+                                                        </button>
                                                         <button
                                                             type="button"
                                                             className="icon-button"

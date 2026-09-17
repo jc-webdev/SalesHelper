@@ -953,6 +953,24 @@ header {
     background: var(--blue);
 }
 
+.meeting-item.is-overdue {
+    border-color: var(--red);
+    background: var(--red-soft);
+}
+
+.meeting-item.is-overdue::before {
+    background: var(--red);
+}
+
+.meeting-item.is-completed {
+    border-color: var(--green);
+    background: var(--green-soft);
+}
+
+.meeting-item.is-completed::before {
+    background: var(--green);
+}
+
 .timeline-item-head {
     display: flex;
     justify-content: space-between;
@@ -1808,6 +1826,12 @@ button:disabled,
     pointer-events: auto;
 }
 
+.meeting-strip-card.is-overdue,
+.calendar-meeting-item.is-overdue {
+    border-color: var(--red);
+    background: var(--red-soft);
+}
+
 .meeting-strip-arrow {
     min-width: 40px;
     padding: 10px 12px;
@@ -1959,7 +1983,7 @@ button:disabled,
     min-width: 20px;
     height: 20px;
     border-radius: 999px;
-    background: var(--red);
+    background: var(--blue);
     color: #fff;
     font-size: 11px;
     font-weight: 800;
@@ -1967,6 +1991,15 @@ button:disabled,
     align-items: center;
     justify-content: center;
     padding: 0 6px;
+}
+
+.calendar-badge.is-overdue {
+    background: var(--red);
+}
+
+.calendar-day.has-overdue-meetings {
+    border-color: var(--red);
+    box-shadow: 0 0 0 1px rgba(214, 69, 69, 0.18);
 }
 
 .calendar-day-popup {
@@ -2126,6 +2159,15 @@ button:disabled,
     color: var(--red);
     border-color: #eeb6b6;
     background: var(--red-soft);
+}
+
+.icon-button.success {
+    color: var(--green);
+}
+
+.icon-button.success.is-active {
+    border-color: #a9dbb0;
+    background: var(--green-soft);
 }
 
 .icon-button:disabled {
