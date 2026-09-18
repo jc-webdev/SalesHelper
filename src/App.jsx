@@ -1282,6 +1282,8 @@ export default function App() {
         });
 
         if (!response.ok) {
+            const errorPayload = await response.json().catch(() => null);
+            setAdminMessage(`Nie udało się pobrać listy użytkowników${errorPayload?.error ? `: ${errorPayload.error}` : ''}.`);
             return;
         }
 

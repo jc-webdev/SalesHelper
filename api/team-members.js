@@ -41,6 +41,8 @@ export default async function handler(request, response) {
 
     const { data: userData, error: userError } = await supabase.auth.getUser(token);
     if (userError || !userData?.user) {
+        // eslint-disable-next-line no-console
+        console.error('team-members: auth.getUser failed', userError);
         return json(response, 401, { error: 'Unauthorized' });
     }
 
