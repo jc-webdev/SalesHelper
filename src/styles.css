@@ -2275,6 +2275,12 @@ button:disabled,
     width: min(1160px, 100%);
 }
 
+.confirm-modal {
+    width: min(440px, 100%);
+    display: grid;
+    gap: 10px;
+}
+
 .import-summary-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2356,6 +2362,143 @@ button:disabled,
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+}
+
+/* ---------- Clients (billing) ---------- */
+
+.clients-layout {
+    display: grid;
+    gap: 20px;
+}
+
+.clients-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+    margin-top: 16px;
+}
+
+.client-tile {
+    display: grid;
+    gap: 8px;
+    justify-items: start;
+    text-align: left;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-lg);
+    background: #fff;
+    box-shadow: var(--shadow-xs);
+    padding: 16px;
+    cursor: pointer;
+    font: inherit;
+    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.client-tile:hover {
+    transform: translateY(-1px);
+    border-color: #b7c9d4;
+    box-shadow: var(--shadow-sm);
+}
+
+.client-tile h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 800;
+}
+
+.client-tile-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+}
+
+.contract-month-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    height: 32px;
+    padding: 0 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    font-weight: 800;
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.contract-month-badge.is-ending {
+    background: var(--red-soft);
+    border-color: var(--red);
+    color: var(--red);
+}
+
+.client-tile.is-overdue {
+    border-color: var(--red);
+    background: var(--red-soft);
+}
+
+.client-tile-invoice-day {
+    margin: 0;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.contract-upload-row {
+    display: grid;
+    gap: 10px;
+}
+
+.contract-file-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.contract-file-name {
+    font-size: 13px;
+    color: var(--muted);
+    word-break: break-all;
+}
+
+.invoice-month-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.invoice-month-square {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    font-weight: 800;
+    font-size: 13px;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.invoice-month-square:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+}
+
+.invoice-month-square.is-sent {
+    background: var(--green-soft);
+    border-color: var(--green);
+    color: var(--green);
+}
+
+.invoice-month-square.is-overdue {
+    background: var(--red-soft);
+    border-color: var(--red);
+    color: var(--red);
 }
 
 /* ---------- Responsive ---------- */

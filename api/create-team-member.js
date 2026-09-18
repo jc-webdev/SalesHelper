@@ -81,6 +81,7 @@ export default async function handler(request, response) {
         email,
         full_name: fullName,
         is_admin: false,
+        role: 'sprzedawca',
     });
 
     if (profileInsertError) {

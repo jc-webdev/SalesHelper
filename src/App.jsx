@@ -20,7 +20,7 @@ import {
 } from './lib/constants';
 import { conversationNodes } from './lib/callScript';
 import { sampleCsv } from './lib/sampleClubs';
-import { getRouteStateFromLocation, buildLocationSearchFromState } from './lib/routing';
+import { getRouteStateFromLocation, buildLocationPathFromPanel } from './lib/routing';
 import {
     normalizeCallStatus,
     isPendingWorkflowStatus,
@@ -39,6 +39,7 @@ import { parseCsv, buildExportCsv } from './lib/csv';
 import { normalizeText, getContactFirstName } from './lib/format';
 import { createNoteId } from './lib/notes';
 import { createMeetingId, localDateTimeToIso, isoToLocalDateTimeParts } from './lib/meetings';
+import { createBillingClientId, normalizeBillingClient, mapBillingClientToRow, mapRowToBillingClient, buildInvoiceMonths, getContractMonthProgress } from './lib/billing';
 
 const iconStrokeProps = {
     viewBox: '0 0 24 24',
@@ -152,7 +153,7 @@ export default function App() {
     const [adminResetLink, setAdminResetLink] = useState(null);
     const [editingMemberId, setEditingMemberId] = useState(null);
     const [memberNameDraft, setMemberNameDraft] = useState('');
-    const [activePanel, setActivePanel] = useState('board');
+    const [activePanel, setActivePanel] = useState(initialRouteState.panel || 'board');
     const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
     const [cameraInventory, setCameraInventory] = useState({ available: 0, ordered: 0, toInstall: 0 });
     const [teamRoster, setTeamRoster] = useState([]);
@@ -185,8 +186,17 @@ export default function App() {
     const [editingMeetingId, setEditingMeetingId] = useState(null);
     const [pendingMeetingDelete, setPendingMeetingDelete] = useState(null);
     const [meetingEditDraft, setMeetingEditDraft] = useState({ date: '', time: '', title: '', notes: '' });
+    const [billingClients, setBillingClients] = useState([]);
+    const [activeBillingClientId, setActiveBillingClientId] = useState(null);
+    const [isAddBillingClientOpen, setIsAddBillingClientOpen] = useState(false);
+    const [addBillingClientClubId, setAddBillingClientClubId] = useState('');
+    const [isBillingClientEditing, setIsBillingClientEditing] = useState(false);
+    const [billingClientDraft, setBillingClientDraft] = useState(null);
+    const [contractUploadError, setContractUploadError] = useState('');
+    const [wonClubPromptClubId, setWonClubPromptClubId] = useState(null);
     const meetingsCarouselRef = useRef(null);
     const lastSavedClubsRef = useRef(new Map());
+    const lastSavedBillingClientsRef = useRef(new Map());
     const detailStatusSelectRef = useRef(null);
 
     useEffect(() => {
@@ -263,6 +273,8 @@ export default function App() {
                 setSharedMemos([]);
                 setIsMemoComposerOpen(false);
                 setMemoDraft('');
+                setBillingClients([]);
+                lastSavedBillingClientsRef.current = new Map();
                 lastSavedClubsRef.current = new Map();
                 setCameraInventory({ available: 0, ordered: 0, toInstall: 0 });
                 setEditingCameraField(null);
@@ -285,13 +297,15 @@ export default function App() {
             let clubsError;
             let cameraInventoryRow;
             let roster;
+            let billingClientRows;
 
             try {
-                ([{ data: profile, error: profileError }, { data: clubs, error: clubsError }, { data: cameraInventoryRow }, { data: roster }] = await Promise.all([
+                ([{ data: profile, error: profileError }, { data: clubs, error: clubsError }, { data: cameraInventoryRow }, { data: roster }, { data: billingClientRows }] = await Promise.all([
                     supabase.from('profiles').select('*').eq('id', session.user.id).single(),
                     supabase.from(SUPABASE_TABLE).select('*').order('updated_at', { ascending: false }),
                     supabase.from('camera_inventory').select('*').eq('id', 'singleton').single(),
                     supabase.from('profiles').select('id, email, full_name').order('full_name', { ascending: true }),
+                    supabase.from('billing_clients').select('*').order('club_name', { ascending: true }),
                 ]));
             } catch (networkError) {
                 // A dropped connection (e.g. right after switching apps to
@@ -314,10 +328,24 @@ export default function App() {
                     email: session.user.email,
                     full_name: session.user.user_metadata?.full_name || session.user.email,
                     is_admin: false,
+                    role: 'sprzedawca',
                 }
                 : profile;
 
             setUserProfile(resolvedProfile);
+
+            const canAccessBillingForProfile = Boolean(resolvedProfile?.is_admin || resolvedProfile?.role === 'ksiegowy');
+            let resolvedPanel = initialRouteState.panel;
+            if (resolvedPanel === 'admin' && !resolvedProfile?.is_admin) {
+                resolvedPanel = null;
+            }
+            if (resolvedPanel === 'clients' && !canAccessBillingForProfile) {
+                resolvedPanel = null;
+            }
+            if (!resolvedPanel) {
+                resolvedPanel = resolvedProfile?.role === 'ksiegowy' ? 'clients' : 'board';
+            }
+            setActivePanel(resolvedPanel);
 
             if (clubsError) {
                 setCloudMessage('Błąd ładowania danych z Supabase');
@@ -325,7 +353,7 @@ export default function App() {
                 return;
             }
 
-            const routeClubId = initialRouteState.activeClubId || initialRouteState.selectedClubId;
+            const routeClubId = resolvedPanel === 'board' ? (initialRouteState.activeClubId || initialRouteState.selectedClubId) : null;
             const loadedClubs = normalizeLoadedClubs((clubs || []).map(mapSupabaseRowToClub));
             const routeClubExists = routeClubId ? loadedClubs.some((club) => club.id === routeClubId) : false;
             const resolvedView = initialRouteState.view === 'conversation' && routeClubExists ? 'conversation' : 'list';
@@ -337,6 +365,17 @@ export default function App() {
             // in-memory copy of that other club is stale by definition,
             // since clubs are only fetched once per login, not live-synced).
             lastSavedClubsRef.current = new Map(loadedClubs.map((club) => [club.id, JSON.stringify(club)]));
+
+            const loadedBillingClients = (billingClientRows || []).map(mapRowToBillingClient);
+            lastSavedBillingClientsRef.current = new Map(loadedBillingClients.map((client) => [client.id, JSON.stringify(client)]));
+            setBillingClients(loadedBillingClients);
+
+            if (resolvedPanel === 'clients' && initialRouteState.selectedClubId) {
+                const routeBillingClient = loadedBillingClients.find((client) => client.clubId === initialRouteState.selectedClubId);
+                if (routeBillingClient) {
+                    setActiveBillingClientId(routeBillingClient.id);
+                }
+            }
 
             setState((currentState) => ({
                 ...currentState,
@@ -447,6 +486,39 @@ export default function App() {
     }, [clubsLoading, session?.user?.id, state.clubs]);
 
     useEffect(() => {
+        if (!session?.user?.id || !isSupabaseConfigured || !supabase || clubsLoading) {
+            return;
+        }
+
+        const timer = window.setTimeout(async () => {
+            const changedBillingClients = billingClients.filter((client) => {
+                const snapshot = JSON.stringify(client);
+                return lastSavedBillingClientsRef.current.get(client.id) !== snapshot;
+            });
+
+            if (!changedBillingClients.length) {
+                return;
+            }
+
+            const { error } = await supabase
+                .from('billing_clients')
+                .upsert(changedBillingClients.map(mapBillingClientToRow), { onConflict: 'id' });
+
+            if (error) {
+                return;
+            }
+
+            changedBillingClients.forEach((client) => {
+                lastSavedBillingClientsRef.current.set(client.id, JSON.stringify(client));
+            });
+        }, 700);
+
+        return () => {
+            window.clearTimeout(timer);
+        };
+    }, [clubsLoading, session?.user?.id, billingClients]);
+
+    useEffect(() => {
         if (!session?.user?.id || !isSupabaseConfigured || !supabase) {
             return;
         }
@@ -484,6 +556,26 @@ export default function App() {
                     };
                 });
             })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'billing_clients' }, (payload) => {
+                if (payload.eventType === 'DELETE') {
+                    const deletedId = payload.old?.id;
+                    if (!deletedId) {
+                        return;
+                    }
+                    lastSavedBillingClientsRef.current.delete(deletedId);
+                    setBillingClients((current) => current.filter((client) => client.id !== deletedId));
+                    return;
+                }
+
+                const incoming = mapRowToBillingClient(payload.new);
+                lastSavedBillingClientsRef.current.set(incoming.id, JSON.stringify(incoming));
+                setBillingClients((current) => {
+                    const exists = current.some((client) => client.id === incoming.id);
+                    return exists
+                        ? current.map((client) => (client.id === incoming.id ? incoming : client))
+                        : [...current, incoming];
+                });
+            })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'shared_memos' }, () => {
                 refreshSharedMemos();
             })
@@ -518,6 +610,20 @@ export default function App() {
         return state.clubs.find((club) => club.id === state.selectedClubId) || null;
     }, [state.clubs, state.selectedClubId, state.view]);
 
+    const canAccessBilling = userProfile?.is_admin || userProfile?.role === 'ksiegowy';
+
+    const activeBillingClient = useMemo(() => {
+        return billingClients.find((client) => client.id === activeBillingClientId) || null;
+    }, [activeBillingClientId, billingClients]);
+
+    const unlinkedClubsForBilling = useMemo(() => {
+        const linkedClubIds = new Set(billingClients.map((client) => client.clubId));
+        return state.clubs
+            .filter((club) => !linkedClubIds.has(club.id))
+            .slice()
+            .sort((left, right) => String(left['Nazwa klubu'] || '').localeCompare(String(right['Nazwa klubu'] || '')));
+    }, [billingClients, state.clubs]);
+
     useEffect(() => {
         if (!selectedClubForListModal || !detailStatusSelectRef.current) {
             return;
@@ -538,16 +644,17 @@ export default function App() {
             return;
         }
 
-        const nextSearch = buildLocationSearchFromState(state);
         const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-        const nextUrlObject = new URL(window.location.href);
-        nextUrlObject.search = nextSearch;
-        const nextUrl = `${nextUrlObject.pathname}${nextUrlObject.search}${nextUrlObject.hash}`;
+        const nextPath = buildLocationPathFromPanel(activePanel, {
+            salesState: state,
+            clientsClubId: activeBillingClient?.clubId || null,
+        });
+        const nextUrl = `${nextPath}${window.location.hash}`;
 
         if (currentUrl !== nextUrl) {
             window.history.replaceState(null, '', nextUrl);
         }
-    }, [state.view, state.selectedClubId, state.activeClubId, state.currentNode, state.history]);
+    }, [activePanel, state.view, state.selectedClubId, state.activeClubId, state.currentNode, state.history, activeBillingClient]);
 
     const summary = useMemo(() => {
         const total = state.clubs.length;
@@ -1663,9 +1770,21 @@ export default function App() {
                                             )}
                                         </div>
                                         <div className="team-member-actions">
-                                            <span className={`status-pill ${member.is_admin ? 'green' : 'blue'}`}>
-                                                {member.is_admin ? 'Admin' : 'Członek zespołu'}
-                                            </span>
+                                            {member.id === session?.user?.id ? (
+                                                <span className={`status-pill ${member.is_admin ? 'green' : 'blue'}`}>
+                                                    {member.is_admin ? 'Admin' : (member.role === 'ksiegowy' ? 'Księgowy' : 'Sprzedawca')}
+                                                </span>
+                                            ) : (
+                                                <select
+                                                    className="status-select"
+                                                    value={member.role || (member.is_admin ? 'admin' : 'sprzedawca')}
+                                                    onChange={(event) => handleUpdateTeamMemberRole(member.id, event.target.value)}
+                                                >
+                                                    <option value="admin">Admin</option>
+                                                    <option value="sprzedawca">Sprzedawca</option>
+                                                    <option value="ksiegowy">Księgowy</option>
+                                                </select>
+                                            )}
                                             {isEditingMember ? (
                                                 <>
                                                     <button
@@ -1731,6 +1850,298 @@ export default function App() {
                     </div>
                 </div>
             </section>
+        );
+    }
+
+    function renderWonClubPrompt() {
+        const club = state.clubs.find((item) => item.id === wonClubPromptClubId);
+        if (!club) {
+            return null;
+        }
+
+        return (
+            <div className="import-modal-backdrop" onClick={() => setWonClubPromptClubId(null)}>
+                <div className="import-modal confirm-modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="step">Klub przeniesiony do Won</div>
+                    <h2>Dodać „{club['Nazwa klubu'] || 'ten klub'}” do Clients?</h2>
+                    <p className="subtle">Klub trafi do zakładki Clients, gdzie można uzupełnić dane rozliczeniowe i umowę.</p>
+                    <div className="meeting-item-actions">
+                        <button
+                            type="button"
+                            className="primary-action"
+                            onClick={() => {
+                                addBillingClient(club.id);
+                                setWonClubPromptClubId(null);
+                            }}
+                        >
+                            Tak, dodaj
+                        </button>
+                        <button type="button" className="secondary" onClick={() => setWonClubPromptClubId(null)}>
+                            Nie teraz
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    function renderClientsPanel() {
+        if (!canAccessBilling) {
+            return (
+                <div className="card admin-card">
+                    <div className="step">Clients</div>
+                    <h1>Brak uprawnień</h1>
+                    <p className="subtle">Ten widok jest dostępny tylko dla Admina i Księgowego.</p>
+                </div>
+            );
+        }
+
+        return (
+            <section className="clients-layout">
+                <div className="card">
+                    <div className="admin-topbar">
+                        <div>
+                            <div className="step">Clients</div>
+                            <h1>Rozliczenia klientów</h1>
+                            <p className="subtle">Dane kontaktowe do faktur, umowy i status wysyłki faktur miesięcznych.</p>
+                        </div>
+                        <button type="button" className="primary-action" onClick={() => setIsAddBillingClientOpen(true)}>
+                            Dodaj klienta
+                        </button>
+                    </div>
+
+                    {billingClients.length ? (
+                        <div className="clients-grid">
+                            {billingClients.map((client) => {
+                                const months = buildInvoiceMonths(client.cooperationStartedAt, client.invoiceDayOfMonth, client.invoiceMonths);
+                                const latestMonth = months[months.length - 1];
+                                const isOverdue = latestMonth?.status === 'overdue';
+                                const contractProgress = getContractMonthProgress(client.contractSignedAt);
+
+                                return (
+                                    <button
+                                        type="button"
+                                        key={client.id}
+                                        className={`client-tile ${isOverdue ? 'is-overdue' : ''}`}
+                                        onClick={() => openBillingClientDetails(client.id)}
+                                    >
+                                        <div className="client-tile-top">
+                                            <h3>{client.clubName}</h3>
+                                            {contractProgress ? (
+                                                <span
+                                                    className={`contract-month-badge ${contractProgress.isNearingEnd ? 'is-ending' : ''}`}
+                                                    title="Miesiąc obowiązywania umowy"
+                                                >
+                                                    {contractProgress.current}/{contractProgress.total}
+                                                </span>
+                                            ) : null}
+                                        </div>
+                                        <p className="client-tile-invoice-day">Faktura: {client.invoiceDayOfMonth}. dnia miesiąca</p>
+                                        <p className="client-tile-invoice-day">Kamery: {client.camerasInstalled} · Korty: {client.courtsTotal}</p>
+                                        {isOverdue ? <span className="status-pill red">Zaległa faktura</span> : null}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <p className="subtle">Brak klientów rozliczeniowych. Dodaj pierwszego, wybierając klub z listy Sales.</p>
+                    )}
+                </div>
+
+                {isAddBillingClientOpen ? renderAddBillingClientModal() : null}
+                {activeBillingClient ? renderBillingClientModal(activeBillingClient) : null}
+            </section>
+        );
+    }
+
+    function renderAddBillingClientModal() {
+        return (
+            <div className="import-modal-backdrop" onClick={() => setIsAddBillingClientOpen(false)}>
+                <div className="import-modal club-modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="conversation-top">
+                        <div>
+                            <div className="step">Nowy klient rozliczeniowy</div>
+                            <h1>Wybierz klub</h1>
+                            <p className="subtle">Klient rozliczeniowy odpowiada istniejącemu klubowi z Sales.</p>
+                        </div>
+                        <button type="button" className="secondary" onClick={() => setIsAddBillingClientOpen(false)}>Anuluj</button>
+                    </div>
+                    <div className="field-group">
+                        <label htmlFor="billing-client-club">Klub</label>
+                        <select
+                            id="billing-client-club"
+                            value={addBillingClientClubId}
+                            onChange={(event) => setAddBillingClientClubId(event.target.value)}
+                        >
+                            <option value="">Wybierz klub...</option>
+                            {unlinkedClubsForBilling.map((club) => (
+                                <option key={club.id} value={club.id}>{club['Nazwa klubu']}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="meeting-scheduler-actions">
+                        <button
+                            type="button"
+                            className="primary-action"
+                            disabled={!addBillingClientClubId}
+                            onClick={() => addBillingClient(addBillingClientClubId)}
+                        >
+                            Dodaj klienta
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    function renderClientDocumentBox(client, title, fieldKey, docFolder) {
+        const filePath = client[fieldKey];
+
+        return (
+            <div className="detail-box contract-upload-row">
+                <h3>{title}</h3>
+                {filePath ? (
+                    <div className="contract-file-row">
+                        <button type="button" className="secondary" onClick={() => handleDocumentDownload(filePath)}>
+                            Pobierz plik
+                        </button>
+                        <span className="contract-file-name">{filePath.split('/').slice(2).join('/')}</span>
+                    </div>
+                ) : (
+                    <p className="subtle">Brak wgranego pliku.</p>
+                )}
+                <div className="upload-row">
+                    <label className="file-label">
+                        {filePath ? 'Zamień plik' : 'Wgraj plik'}
+                        <input type="file" accept="application/pdf" onChange={(event) => handleDocumentUpload(client.id, fieldKey, docFolder, event.target.files?.[0])} />
+                    </label>
+                </div>
+                {contractUploadError ? <p className="error-message">{contractUploadError}</p> : null}
+            </div>
+        );
+    }
+
+    function renderBillingClientModal(client) {
+        const months = buildInvoiceMonths(client.cooperationStartedAt, client.invoiceDayOfMonth, client.invoiceMonths);
+        const contractProgress = getContractMonthProgress(client.contractSignedAt);
+
+        return (
+            <div className="import-modal-backdrop" onClick={closeBillingClientDetails}>
+                <div className="import-modal club-modal billing-client-modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="task-toprow">
+                        <div>
+                            <div className="step">Klient rozliczeniowy</div>
+                            <h1>{client.clubName}</h1>
+                            {contractProgress ? (
+                                <span
+                                    className={`contract-month-badge ${contractProgress.isNearingEnd ? 'is-ending' : ''}`}
+                                    title="Miesiąc obowiązywania umowy"
+                                >
+                                    {contractProgress.current}/{contractProgress.total}
+                                </span>
+                            ) : null}
+                        </div>
+                        <div className="task-buttons">
+                            {!isBillingClientEditing ? (
+                                <button type="button" className="icon-button" aria-label="Edytuj dane" title="Edytuj dane" onClick={() => startBillingClientEditing(client)}>
+                                    <IconPencil />
+                                </button>
+                            ) : null}
+                            <button type="button" className="secondary" onClick={closeBillingClientDetails}>Zamknij</button>
+                        </div>
+                    </div>
+
+                    {isBillingClientEditing && billingClientDraft ? (
+                        <div className="editor-grid">
+                            <label className="editor-field">
+                                <span>Mail kontaktowy 1</span>
+                                <input type="email" value={billingClientDraft.email1} onChange={(event) => updateBillingClientDraftField('email1', event.target.value)} />
+                            </label>
+                            <label className="editor-field">
+                                <span>Mail kontaktowy 2</span>
+                                <input type="email" value={billingClientDraft.email2} onChange={(event) => updateBillingClientDraftField('email2', event.target.value)} />
+                            </label>
+                            <label className="editor-field">
+                                <span>Telefon 1</span>
+                                <input type="text" value={billingClientDraft.phone1Number} onChange={(event) => updateBillingClientDraftField('phone1Number', event.target.value)} />
+                            </label>
+                            <label className="editor-field">
+                                <span>Nazwa dla telefonu 1</span>
+                                <input type="text" value={billingClientDraft.phone1Name} onChange={(event) => updateBillingClientDraftField('phone1Name', event.target.value)} placeholder="np. Recepcja" />
+                            </label>
+                            <label className="editor-field">
+                                <span>Telefon 2</span>
+                                <input type="text" value={billingClientDraft.phone2Number} onChange={(event) => updateBillingClientDraftField('phone2Number', event.target.value)} />
+                            </label>
+                            <label className="editor-field">
+                                <span>Nazwa dla telefonu 2</span>
+                                <input type="text" value={billingClientDraft.phone2Name} onChange={(event) => updateBillingClientDraftField('phone2Name', event.target.value)} placeholder="np. Księgowość klubu" />
+                            </label>
+                            <label className="editor-field">
+                                <span>Data podpisania umowy</span>
+                                <input type="date" value={billingClientDraft.contractSignedAt} onChange={(event) => updateBillingClientDraftField('contractSignedAt', event.target.value)} />
+                            </label>
+                            <label className="editor-field">
+                                <span>Data rozpoczęcia współpracy</span>
+                                <input type="date" value={billingClientDraft.cooperationStartedAt} onChange={(event) => updateBillingClientDraftField('cooperationStartedAt', event.target.value)} />
+                            </label>
+                            <label className="editor-field">
+                                <span>Dzień miesiąca wystawienia faktury</span>
+                                <input type="number" min="1" max="31" value={billingClientDraft.invoiceDayOfMonth} onChange={(event) => updateBillingClientDraftField('invoiceDayOfMonth', Number(event.target.value) || 1)} />
+                            </label>
+                            <label className="editor-field">
+                                <span>Kamery zainstalowane w klubie</span>
+                                <input type="number" min="0" value={billingClientDraft.camerasInstalled} onChange={(event) => updateBillingClientDraftField('camerasInstalled', Number(event.target.value) || 0)} />
+                            </label>
+                            <label className="editor-field">
+                                <span>Liczba kortów łącznie</span>
+                                <input type="number" min="0" value={billingClientDraft.courtsTotal} onChange={(event) => updateBillingClientDraftField('courtsTotal', Number(event.target.value) || 0)} />
+                            </label>
+                            <label className="editor-field wide">
+                                <span>Dane do rozliczeń</span>
+                                <textarea rows={4} value={billingClientDraft.billingDetails} onChange={(event) => updateBillingClientDraftField('billingDetails', event.target.value)} />
+                            </label>
+                            <div className="detail-box-actions">
+                                <button type="button" className="primary-action" onClick={() => saveBillingClientEditing(client.id)}>Zapisz</button>
+                                <button type="button" className="secondary" onClick={cancelBillingClientEditing}>Anuluj</button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="details-grid">
+                            <div className="detail-box"><h3>Mail kontaktowy 1</h3><p>{client.emails[0] ? <a href={`mailto:${client.emails[0]}`}>{client.emails[0]}</a> : 'Brak'}</p></div>
+                            <div className="detail-box"><h3>Mail kontaktowy 2</h3><p>{client.emails[1] ? <a href={`mailto:${client.emails[1]}`}>{client.emails[1]}</a> : 'Brak'}</p></div>
+                            <div className="detail-box"><h3>{client.phones[0].name || 'Telefon 1'}</h3><p>{client.phones[0].number || 'Brak'}</p></div>
+                            <div className="detail-box"><h3>{client.phones[1].name || 'Telefon 2'}</h3><p>{client.phones[1].number || 'Brak'}</p></div>
+                            <div className="detail-box"><h3>Data podpisania umowy</h3><p>{client.contractSignedAt || 'Brak'}</p></div>
+                            <div className="detail-box"><h3>Data rozpoczęcia współpracy</h3><p>{client.cooperationStartedAt || 'Brak'}</p></div>
+                            <div className="detail-box"><h3>Dzień faktury</h3><p>{client.invoiceDayOfMonth}. dnia miesiąca</p></div>
+                            <div className="detail-box"><h3>Kamery w klubie</h3><p>{client.camerasInstalled}</p></div>
+                            <div className="detail-box"><h3>Korty łącznie</h3><p>{client.courtsTotal}</p></div>
+                            <div className="detail-box"><h3>Dane do rozliczeń</h3><p>{client.billingDetails || 'Brak'}</p></div>
+                        </div>
+                    )}
+
+                    {renderClientDocumentBox(client, 'Umowa z klubem (PDF)', 'contractFilePath', 'umowa')}
+                    {renderClientDocumentBox(client, 'Protokół odbioru (PDF)', 'acceptanceProtocolFilePath', 'protokol')}
+
+                    <div className="detail-box">
+                        <h3>Status faktur</h3>
+                        <div className="invoice-month-grid">
+                            {months.map((monthEntry) => (
+                                <button
+                                    key={monthEntry.key}
+                                    type="button"
+                                    className={`invoice-month-square is-${monthEntry.status}`}
+                                    title={`${new Intl.DateTimeFormat('pl-PL', { month: 'long', year: 'numeric' }).format(new Date(monthEntry.year, monthEntry.month - 1, 1))} — ${monthEntry.status === 'sent' ? 'wysłano' : monthEntry.status === 'overdue' ? 'po terminie' : 'nie wysłano'}`}
+                                    onClick={() => toggleInvoiceMonthSent(client.id, monthEntry.key)}
+                                >
+                                    {monthEntry.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
         );
     }
 
@@ -1862,6 +2273,170 @@ export default function App() {
         persistPatch(selectedClubForListModal.id, patch);
         setIsDetailEditing(false);
         setDetailDraft(null);
+    }
+
+    function persistBillingClientPatch(clientId, patch) {
+        setBillingClients((current) => current.map((client) => (
+            client.id === clientId
+                ? { id: client.id, clubId: client.clubId, clubName: client.clubName, ...normalizeBillingClient({ ...client, ...patch }) }
+                : client
+        )));
+    }
+
+    function addBillingClient(clubId) {
+        const club = state.clubs.find((candidate) => candidate.id === clubId);
+        if (!club) {
+            return;
+        }
+
+        const newClient = {
+            id: createBillingClientId(),
+            clubId: club.id,
+            clubName: club['Nazwa klubu'] || '',
+            ...normalizeBillingClient({
+                cooperationStartedAt: new Date().toISOString().slice(0, 10),
+                invoiceDayOfMonth: 10,
+            }),
+        };
+
+        setBillingClients((current) => [...current, newClient]);
+        setIsAddBillingClientOpen(false);
+        setAddBillingClientClubId('');
+        setActiveBillingClientId(newClient.id);
+    }
+
+    function openBillingClientDetails(clientId) {
+        setActiveBillingClientId(clientId);
+        setIsBillingClientEditing(false);
+        setBillingClientDraft(null);
+        setContractUploadError('');
+    }
+
+    function closeBillingClientDetails() {
+        setActiveBillingClientId(null);
+        setIsBillingClientEditing(false);
+        setBillingClientDraft(null);
+        setContractUploadError('');
+    }
+
+    function startBillingClientEditing(client) {
+        if (!client) {
+            return;
+        }
+
+        setBillingClientDraft({
+            email1: client.emails[0],
+            email2: client.emails[1],
+            phone1Number: client.phones[0].number,
+            phone1Name: client.phones[0].name,
+            phone2Number: client.phones[1].number,
+            phone2Name: client.phones[1].name,
+            billingDetails: client.billingDetails,
+            contractSignedAt: client.contractSignedAt,
+            cooperationStartedAt: client.cooperationStartedAt,
+            invoiceDayOfMonth: client.invoiceDayOfMonth,
+            camerasInstalled: client.camerasInstalled,
+            courtsTotal: client.courtsTotal,
+        });
+        setIsBillingClientEditing(true);
+    }
+
+    function cancelBillingClientEditing() {
+        setIsBillingClientEditing(false);
+        setBillingClientDraft(null);
+    }
+
+    function updateBillingClientDraftField(fieldKey, fieldValue) {
+        setBillingClientDraft((currentDraft) => (currentDraft ? { ...currentDraft, [fieldKey]: fieldValue } : currentDraft));
+    }
+
+    function saveBillingClientEditing(clientId) {
+        if (!billingClientDraft) {
+            return;
+        }
+
+        persistBillingClientPatch(clientId, {
+            emails: [billingClientDraft.email1, billingClientDraft.email2],
+            phones: [
+                { number: billingClientDraft.phone1Number, name: billingClientDraft.phone1Name },
+                { number: billingClientDraft.phone2Number, name: billingClientDraft.phone2Name },
+            ],
+            billingDetails: billingClientDraft.billingDetails,
+            contractSignedAt: billingClientDraft.contractSignedAt,
+            cooperationStartedAt: billingClientDraft.cooperationStartedAt,
+            invoiceDayOfMonth: billingClientDraft.invoiceDayOfMonth,
+            camerasInstalled: billingClientDraft.camerasInstalled,
+            courtsTotal: billingClientDraft.courtsTotal,
+        });
+        setIsBillingClientEditing(false);
+        setBillingClientDraft(null);
+    }
+
+    function toggleInvoiceMonthSent(clientId, monthKey) {
+        setBillingClients((current) => current.map((client) => {
+            if (client.id !== clientId) {
+                return client;
+            }
+
+            const wasSent = Boolean(client.invoiceMonths?.[monthKey]?.sent);
+            return {
+                ...client,
+                invoiceMonths: {
+                    ...client.invoiceMonths,
+                    [monthKey]: wasSent ? { sent: false } : { sent: true, sentAt: new Date().toISOString() },
+                },
+            };
+        }));
+    }
+
+    async function handleDocumentUpload(clientId, fieldKey, docFolder, file) {
+        if (!supabase || !file) {
+            return;
+        }
+
+        setContractUploadError('');
+        const path = `${clientId}/${docFolder}/${file.name}`;
+        const { error } = await supabase.storage.from('contracts').upload(path, file, { upsert: true });
+
+        if (error) {
+            setContractUploadError('Nie udało się wgrać pliku.');
+            return;
+        }
+
+        persistBillingClientPatch(clientId, { [fieldKey]: path });
+    }
+
+    async function handleDocumentDownload(path) {
+        if (!supabase || !path) {
+            return;
+        }
+
+        const { data, error } = await supabase.storage.from('contracts').createSignedUrl(path, 60);
+        if (error || !data?.signedUrl) {
+            setContractUploadError('Nie udało się otworzyć pliku.');
+            return;
+        }
+
+        window.open(data.signedUrl, '_blank', 'noreferrer');
+    }
+
+    async function handleUpdateTeamMemberRole(memberId, role) {
+        if (!supabase || !userProfile?.is_admin || memberId === session?.user?.id) {
+            return;
+        }
+
+        const { error } = await supabase
+            .from('profiles')
+            .update({ role, is_admin: role === 'admin', updated_at: new Date().toISOString() })
+            .eq('id', memberId);
+
+        if (error) {
+            setAdminMessage('Nie udało się zaktualizować roli użytkownika.');
+            return;
+        }
+
+        setAdminMessage('Zaktualizowano rolę użytkownika.');
+        await refreshTeamMembers();
     }
 
     function exportCsvToFile() {
@@ -2015,6 +2590,8 @@ export default function App() {
     }
 
     function updateClubWorkflowStatus(clubId, callStatus) {
+        const club = state.clubs.find((item) => item.id === clubId);
+        const previousStatus = normalizeCallStatus(club?.callStatus || DEFAULT_STATUS);
         const normalizedStatus = normalizeCallStatus(callStatus);
         const patch = { callStatus: normalizedStatus };
 
@@ -2023,6 +2600,19 @@ export default function App() {
         }
 
         persistPatch(clubId, patch);
+        maybePromptAddToClients(clubId, previousStatus, normalizedStatus);
+    }
+
+    function maybePromptAddToClients(clubId, previousStatus, nextStatus) {
+        if (nextStatus !== STATUS_WON || previousStatus === STATUS_WON) {
+            return;
+        }
+
+        if (billingClients.some((client) => client.clubId === clubId)) {
+            return;
+        }
+
+        setWonClubPromptClubId(clubId);
     }
 
     function updateClubAssignment(clubId, userId) {
@@ -2075,14 +2665,16 @@ export default function App() {
             return;
         }
 
+        const previousStatus = normalizeCallStatus(club.callStatus);
         if (
-            normalizeCallStatus(club.callStatus) === targetPatch.callStatus
+            previousStatus === targetPatch.callStatus
             && Boolean(club.plannedToday) === Boolean(targetPatch.plannedToday)
         ) {
             return;
         }
 
         persistPatch(club.id, targetPatch);
+        maybePromptAddToClients(club.id, previousStatus, targetPatch.callStatus);
     }
 
     function buildApiUrl(path) {
@@ -3058,8 +3650,9 @@ export default function App() {
         }
 
         const node = conversationNodes[state.currentNode];
+        const callerName = userProfile?.full_name || session?.user?.user_metadata?.full_name || session?.user?.email || 'Przedstawiciel Oqla';
         const script = node.script
-            .replaceAll('[IMIĘ]', getContactFirstName(currentClub['Imie i nazwisko kontaktu']))
+            .replaceAll('[IMIĘ]', callerName)
             .replaceAll('[DZIEŃ]', 'wybrany termin');
         const finalScreen = ['success', 'no', 'end'].includes(state.currentNode);
 
@@ -3188,14 +3781,21 @@ export default function App() {
                     {isMobileNavOpen ? <IconX /> : <IconMenu />}
                 </button>
                 <div className={isMobileNavOpen ? 'header-actions is-open' : 'header-actions'}>
-                    {userProfile?.is_admin ? (
+                    {canAccessBilling || userProfile?.is_admin ? (
                         <>
                             <button type="button" className={activePanel === 'board' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('board'); setIsMobileNavOpen(false); }}>
-                                Aplikacja
+                                Sales
                             </button>
-                            <button type="button" className={activePanel === 'admin' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('admin'); setIsMobileNavOpen(false); }}>
-                                Admin
-                            </button>
+                            {canAccessBilling ? (
+                                <button type="button" className={activePanel === 'clients' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('clients'); setIsMobileNavOpen(false); }}>
+                                    Clients
+                                </button>
+                            ) : null}
+                            {userProfile?.is_admin ? (
+                                <button type="button" className={activePanel === 'admin' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('admin'); setIsMobileNavOpen(false); }}>
+                                    Admin
+                                </button>
+                            ) : null}
                         </>
                     ) : null}
                     <span className="badge user-badge">{session.user.email}</span>
@@ -3205,7 +3805,7 @@ export default function App() {
                 </div>
             </header>
 
-            {activePanel === 'admin' ? renderAdminPanel() : (
+            {activePanel === 'admin' ? renderAdminPanel() : activePanel === 'clients' ? renderClientsPanel() : (
                 <main className={state.view === 'conversation' ? 'single-column' : 'list-layout'}>
                     {state.view === 'list' ? (
                         <section className="list-dashboard">
@@ -3556,6 +4156,7 @@ export default function App() {
 
                     {state.view === 'conversation' ? renderConversationView() : null}
                     {state.view === 'list' && !importReview && selectedClubForListModal ? renderClubDetailsModal(selectedClubForListModal) : null}
+                    {wonClubPromptClubId ? renderWonClubPrompt() : null}
                 </main>
             )}
         </div>

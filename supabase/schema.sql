@@ -26,6 +26,31 @@ create table if not exists public.profiles (
     email text not null unique,
     full_name text not null,
     is_admin boolean not null default false,
+    role text not null default 'sprzedawca',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+alter table public.profiles add column if not exists role text not null default 'sprzedawca';
+
+update public.profiles set role = 'admin' where is_admin = true and role <> 'admin';
+
+do $$
+begin
+    if not exists (select 1 from pg_constraint where conname = 'profiles_role_check') then
+        alter table public.profiles add constraint profiles_role_check check (role in ('admin', 'sprzedawca', 'ksiegowy'));
+    end if;
+
+    if not exists (select 1 from pg_constraint where conname = 'profiles_role_admin_sync_check') then
+        alter table public.profiles add constraint profiles_role_admin_sync_check check ((role = 'admin') = is_admin);
+    end if;
+end $$;
+
+create table if not exists public.billing_clients (
+    id uuid primary key default gen_random_uuid(),
+    club_id text not null unique references public.clubs(id) on delete cascade,
+    club_name text not null,
+    payload jsonb not null default '{}'::jsonb,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
@@ -99,6 +124,43 @@ as $$
     );
 $$;
 
+create or replace function public.is_billing_staff(user_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+as $$
+    select exists (
+        select 1
+        from public.profiles
+        where id = user_id and (is_admin = true or role = 'ksiegowy')
+    );
+$$;
+
+-- Non-admins can update their own profile row (name etc.) via the "own
+-- profile" policy below, but role/is_admin must stay admin-only — RLS
+-- alone can't restrict individual columns, so a trigger silently reverts
+-- those two fields whenever the actor isn't an admin.
+create or replace function public.protect_profile_privilege_fields()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+    if not public.is_admin_user(auth.uid()) then
+        new.role := old.role;
+        new.is_admin := old.is_admin;
+    end if;
+    return new;
+end;
+$$;
+
+drop trigger if exists profiles_protect_privilege_fields on public.profiles;
+create trigger profiles_protect_privilege_fields
+before update on public.profiles
+for each row execute function public.protect_profile_privilege_fields();
+
 drop trigger if exists clubs_set_updated_at on public.clubs;
 create trigger clubs_set_updated_at
 before update on public.clubs
@@ -119,6 +181,11 @@ create trigger camera_inventory_set_updated_at
 before update on public.camera_inventory
 for each row execute function public.set_updated_at();
 
+drop trigger if exists billing_clients_set_updated_at on public.billing_clients;
+create trigger billing_clients_set_updated_at
+before update on public.billing_clients
+for each row execute function public.set_updated_at();
+
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
 after insert on auth.users
@@ -128,6 +195,7 @@ alter table public.clubs enable row level security;
 alter table public.profiles enable row level security;
 alter table public.shared_memos enable row level security;
 alter table public.camera_inventory enable row level security;
+alter table public.billing_clients enable row level security;
 
 drop policy if exists "Allow authenticated read clubs" on public.clubs;
 create policy "Allow authenticated read clubs"
@@ -210,6 +278,68 @@ to authenticated
 using (auth.uid() is not null)
 with check (auth.uid() is not null);
 
+drop policy if exists "Allow billing staff read billing clients" on public.billing_clients;
+create policy "Allow billing staff read billing clients"
+on public.billing_clients
+for select
+to authenticated
+using (public.is_billing_staff(auth.uid()));
+
+drop policy if exists "Allow billing staff insert billing clients" on public.billing_clients;
+create policy "Allow billing staff insert billing clients"
+on public.billing_clients
+for insert
+to authenticated
+with check (public.is_billing_staff(auth.uid()));
+
+drop policy if exists "Allow billing staff update billing clients" on public.billing_clients;
+create policy "Allow billing staff update billing clients"
+on public.billing_clients
+for update
+to authenticated
+using (public.is_billing_staff(auth.uid()))
+with check (public.is_billing_staff(auth.uid()));
+
+drop policy if exists "Allow billing staff delete billing clients" on public.billing_clients;
+create policy "Allow billing staff delete billing clients"
+on public.billing_clients
+for delete
+to authenticated
+using (public.is_billing_staff(auth.uid()));
+
+insert into storage.buckets (id, name, public)
+values ('contracts', 'contracts', false)
+on conflict (id) do nothing;
+
+drop policy if exists "Billing staff read contracts" on storage.objects;
+create policy "Billing staff read contracts"
+on storage.objects
+for select
+to authenticated
+using (bucket_id = 'contracts' and public.is_billing_staff(auth.uid()));
+
+drop policy if exists "Billing staff insert contracts" on storage.objects;
+create policy "Billing staff insert contracts"
+on storage.objects
+for insert
+to authenticated
+with check (bucket_id = 'contracts' and public.is_billing_staff(auth.uid()));
+
+drop policy if exists "Billing staff update contracts" on storage.objects;
+create policy "Billing staff update contracts"
+on storage.objects
+for update
+to authenticated
+using (bucket_id = 'contracts' and public.is_billing_staff(auth.uid()))
+with check (bucket_id = 'contracts' and public.is_billing_staff(auth.uid()));
+
+drop policy if exists "Billing staff delete contracts" on storage.objects;
+create policy "Billing staff delete contracts"
+on storage.objects
+for delete
+to authenticated
+using (bucket_id = 'contracts' and public.is_billing_staff(auth.uid()));
+
 -- Live sync: broadcast row changes on these tables to every connected
 -- client (multiple people work on the same board at once). Guarded with
 -- a existence check since `alter publication ... add table` has no
@@ -228,6 +358,13 @@ begin
         where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'shared_memos'
     ) then
         alter publication supabase_realtime add table public.shared_memos;
+    end if;
+
+    if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'billing_clients'
+    ) then
+        alter publication supabase_realtime add table public.billing_clients;
     end if;
 
     if not exists (

@@ -1,6 +1,29 @@
+const PANEL_SEGMENTS = {
+    board: 'sales',
+    clients: 'clients',
+    admin: 'admin',
+};
+
+function getPanelFromPathname(pathname) {
+    const segment = String(pathname || '').split('/').filter(Boolean)[0] || '';
+
+    if (segment === 'sales') {
+        return 'board';
+    }
+    if (segment === 'clients') {
+        return 'clients';
+    }
+    if (segment === 'admin') {
+        return 'admin';
+    }
+
+    return null;
+}
+
 export function getRouteStateFromLocation() {
     if (typeof window === 'undefined') {
         return {
+            panel: null,
             view: 'list',
             selectedClubId: null,
             activeClubId: null,
@@ -19,6 +42,7 @@ export function getRouteStateFromLocation() {
         : [];
 
     return {
+        panel: getPanelFromPathname(window.location.pathname),
         view: mode === 'conversation' ? 'conversation' : 'list',
         selectedClubId: mode === 'list' ? selectedClubId : null,
         activeClubId,
@@ -46,4 +70,20 @@ export function buildLocationSearchFromState(state) {
 
     const nextSearch = params.toString();
     return nextSearch ? `?${nextSearch}` : '';
+}
+
+export function buildLocationPathFromPanel(panel, { salesState, clientsClubId } = {}) {
+    const segment = PANEL_SEGMENTS[panel] || PANEL_SEGMENTS.board;
+    let search = '';
+
+    if (panel === 'board') {
+        search = buildLocationSearchFromState(salesState || {});
+    } else if (panel === 'clients' && clientsClubId) {
+        const params = new URLSearchParams();
+        params.set('mode', 'list');
+        params.set('club', clientsClubId);
+        search = `?${params.toString()}`;
+    }
+
+    return `/${segment}/${search}`;
 }

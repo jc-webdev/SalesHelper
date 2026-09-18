@@ -56,7 +56,7 @@ export default async function handler(request, response) {
 
     const { data: members, error: membersError } = await supabase
         .from('profiles')
-        .select('id, email, full_name, is_admin, created_at')
+        .select('id, email, full_name, is_admin, role, created_at')
         .order('created_at', { ascending: false });
 
     if (membersError) {
