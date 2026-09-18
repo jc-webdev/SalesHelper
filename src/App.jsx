@@ -206,6 +206,8 @@ export default function App() {
     const [isBillingClientEditing, setIsBillingClientEditing] = useState(false);
     const [billingClientDraft, setBillingClientDraft] = useState(null);
     const [contractUploadError, setContractUploadError] = useState('');
+    const [openArchiveKeys, setOpenArchiveKeys] = useState(() => new Set());
+    const [archiveLists, setArchiveLists] = useState({});
     const [wonClubPromptClubId, setWonClubPromptClubId] = useState(null);
     const [pdfFiles, setPdfFiles] = useState([]);
     const [pdfPages, setPdfPages] = useState([]);
@@ -2083,6 +2085,9 @@ export default function App() {
 
     function renderClientDocumentBox(client, title, fieldKey, docFolder) {
         const filePath = client[fieldKey];
+        const archiveKey = `${client.id}:${docFolder}`;
+        const isArchiveOpen = openArchiveKeys.has(archiveKey);
+        const archiveItems = archiveLists[archiveKey] || [];
 
         return (
             <div className="detail-box contract-upload-row">
@@ -2104,6 +2109,31 @@ export default function App() {
                     </label>
                 </div>
                 {contractUploadError ? <p className="error-message">{contractUploadError}</p> : null}
+
+                <div className="document-archive">
+                    <button type="button" className="secondary document-archive-toggle" onClick={() => toggleArchiveSection(client.id, docFolder)}>
+                        {isArchiveOpen ? 'Ukryj archiwum' : 'Archiwum (starsze wersje)'}
+                    </button>
+                    {isArchiveOpen ? (
+                        archiveItems.length ? (
+                            <ul className="document-archive-list">
+                                {archiveItems.map((item) => (
+                                    <li key={item.id}>
+                                        <button
+                                            type="button"
+                                            className="secondary"
+                                            onClick={() => handleDocumentDownload(`${client.id}/${docFolder}/archiwum/${item.name}`)}
+                                        >
+                                            {item.name}
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : (
+                            <p className="subtle">Brak zarchiwizowanych wersji.</p>
+                        )
+                    ) : null}
+                </div>
             </div>
         );
     }
@@ -2519,6 +2549,34 @@ export default function App() {
         }
 
         window.open(data.signedUrl, '_blank', 'noreferrer');
+    }
+
+    async function toggleArchiveSection(clientId, docFolder) {
+        const key = `${clientId}:${docFolder}`;
+
+        if (openArchiveKeys.has(key)) {
+            setOpenArchiveKeys((current) => {
+                const next = new Set(current);
+                next.delete(key);
+                return next;
+            });
+            return;
+        }
+
+        setOpenArchiveKeys((current) => new Set(current).add(key));
+
+        if (!supabase) {
+            return;
+        }
+
+        const { data, error } = await supabase.storage
+            .from('contracts')
+            .list(`${clientId}/${docFolder}/archiwum`, { sortBy: { column: 'created_at', order: 'desc' } });
+
+        setArchiveLists((current) => ({
+            ...current,
+            [key]: error ? [] : (data || []).filter((item) => item.id),
+        }));
     }
 
     async function handleUpdateTeamMemberRole(memberId, role) {
