@@ -36,10 +36,21 @@ import {
     getConnectionTone,
 } from './lib/clubs';
 import { parseCsv, buildExportCsv } from './lib/csv';
-import { normalizeText, getContactFirstName } from './lib/format';
+import { normalizeText, getContactFirstName, slugify } from './lib/format';
 import { createNoteId } from './lib/notes';
 import { createMeetingId, localDateTimeToIso, isoToLocalDateTimeParts } from './lib/meetings';
 import { createBillingClientId, normalizeBillingClient, mapBillingClientToRow, mapRowToBillingClient, buildInvoiceMonths, getContractMonthProgress } from './lib/billing';
+
+// pdf-lib + pdfjs-dist are large (over 1MB combined) and only needed on the
+// PDF tab, so they're code-split via dynamic import instead of loading them
+// into every session's initial bundle.
+let pdfMergerModulePromise = null;
+function loadPdfMergerModule() {
+    if (!pdfMergerModulePromise) {
+        pdfMergerModulePromise = import('./lib/pdfMerger');
+    }
+    return pdfMergerModulePromise;
+}
 
 const iconStrokeProps = {
     viewBox: '0 0 24 24',
@@ -196,6 +207,24 @@ export default function App() {
     const [billingClientDraft, setBillingClientDraft] = useState(null);
     const [contractUploadError, setContractUploadError] = useState('');
     const [wonClubPromptClubId, setWonClubPromptClubId] = useState(null);
+    const [pdfFiles, setPdfFiles] = useState([]);
+    const [pdfPages, setPdfPages] = useState([]);
+    const [pdfLoadStatus, setPdfLoadStatus] = useState(null);
+    const [pdfMergeStatus, setPdfMergeStatus] = useState(null);
+    const [pdfIsMerging, setPdfIsMerging] = useState(false);
+    const [pdfIsLoadingFiles, setPdfIsLoadingFiles] = useState(false);
+    const [draggedPdfPageId, setDraggedPdfPageId] = useState(null);
+    const [dragOverPdfPageId, setDragOverPdfPageId] = useState(null);
+    const [pdfCompressFile, setPdfCompressFile] = useState(null);
+    const [pdfCompressStatus, setPdfCompressStatus] = useState(null);
+    const [pdfIsCompressing, setPdfIsCompressing] = useState(false);
+    const [mergedPdfBlob, setMergedPdfBlob] = useState(null);
+    const [pdfSaveType, setPdfSaveType] = useState('oferta');
+    const [pdfSaveOfferName, setPdfSaveOfferName] = useState('');
+    const [pdfSaveClientId, setPdfSaveClientId] = useState('');
+    const [pdfSaveStatus, setPdfSaveStatus] = useState(null);
+    const [pdfIsSaving, setPdfIsSaving] = useState(false);
+    const [pdfSaveConflict, setPdfSaveConflict] = useState(null);
     const meetingsCarouselRef = useRef(null);
     const lastSavedClubsRef = useRef(new Map());
     const lastSavedBillingClientsRef = useRef(new Map());
@@ -2168,8 +2197,8 @@ export default function App() {
                         <div className="details-grid">
                             <div className="detail-box"><h3>Mail kontaktowy 1</h3><p>{client.emails[0] ? <a href={`mailto:${client.emails[0]}`}>{client.emails[0]}</a> : 'Brak'}</p></div>
                             <div className="detail-box"><h3>Mail kontaktowy 2</h3><p>{client.emails[1] ? <a href={`mailto:${client.emails[1]}`}>{client.emails[1]}</a> : 'Brak'}</p></div>
-                            <div className="detail-box"><h3>{client.phones[0].name || 'Telefon 1'}</h3><p>{client.phones[0].number || 'Brak'}</p></div>
-                            <div className="detail-box"><h3>{client.phones[1].name || 'Telefon 2'}</h3><p>{client.phones[1].number || 'Brak'}</p></div>
+                            <div className="detail-box"><h3>{client.phones[0].name || 'Telefon 1'}</h3><p>{client.phones[0].number ? <a href={`tel:${client.phones[0].number.replace(/\s+/g, '')}`}>{client.phones[0].number}</a> : 'Brak'}</p></div>
+                            <div className="detail-box"><h3>{client.phones[1].name || 'Telefon 2'}</h3><p>{client.phones[1].number ? <a href={`tel:${client.phones[1].number.replace(/\s+/g, '')}`}>{client.phones[1].number}</a> : 'Brak'}</p></div>
                             <div className="detail-box"><h3>Data podpisania umowy</h3><p>{client.contractSignedAt || 'Brak'}</p></div>
                             <div className="detail-box"><h3>Data rozpoczęcia współpracy</h3><p>{client.cooperationStartedAt || 'Brak'}</p></div>
                             <div className="detail-box"><h3>Dzień faktury</h3><p>{client.invoiceDayOfMonth}. dnia miesiąca</p></div>
@@ -2509,6 +2538,399 @@ export default function App() {
 
         setAdminMessage('Zaktualizowano rolę użytkownika.');
         await refreshTeamMembers();
+    }
+
+    async function handlePdfFilesSelected(fileList) {
+        const files = Array.from(fileList || []).filter((file) => file.type === 'application/pdf');
+        if (!files.length) {
+            return;
+        }
+
+        setPdfIsLoadingFiles(true);
+        setPdfLoadStatus({ tone: '', text: 'Wczytywanie i renderowanie stron...' });
+
+        try {
+            const { createFileId, renderPdfPageThumbnails } = await loadPdfMergerModule();
+            for (const file of files) {
+                const fileId = createFileId();
+                // eslint-disable-next-line no-await-in-loop
+                const pages = await renderPdfPageThumbnails(file);
+                setPdfFiles((current) => [...current, { id: fileId, file, name: file.name }]);
+                setPdfPages((current) => [...current, ...pages.map((page) => ({
+                    id: `${fileId}-${page.pageIndex}`,
+                    fileId,
+                    pageIndex: page.pageIndex,
+                    pageLabel: page.pageLabel,
+                    thumbUrl: page.thumbUrl,
+                    fileName: file.name,
+                }))]);
+            }
+            setPdfLoadStatus({ tone: 'ok', text: `Dodano ${files.length} plik(ów).` });
+        } catch (error) {
+            setPdfLoadStatus({ tone: 'err', text: `Błąd wczytywania: ${error.message}` });
+        } finally {
+            setPdfIsLoadingFiles(false);
+        }
+    }
+
+    function removePdfFile(fileId) {
+        setPdfFiles((current) => current.filter((entry) => entry.id !== fileId));
+        setPdfPages((current) => current.filter((page) => page.fileId !== fileId));
+    }
+
+    function removePdfPage(pageId) {
+        setPdfPages((current) => current.filter((page) => page.id !== pageId));
+    }
+
+    function handlePdfPageDragStart(event, pageId) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', pageId);
+        setDraggedPdfPageId(pageId);
+    }
+
+    function handlePdfPageDragEnd() {
+        setDraggedPdfPageId(null);
+        setDragOverPdfPageId(null);
+    }
+
+    function handlePdfPageDragOver(event, pageId) {
+        event.preventDefault();
+        setDragOverPdfPageId(pageId);
+    }
+
+    function handlePdfPageDrop(event, targetPageId) {
+        event.preventDefault();
+        const sourcePageId = draggedPdfPageId || event.dataTransfer.getData('text/plain');
+        setDraggedPdfPageId(null);
+        setDragOverPdfPageId(null);
+        if (!sourcePageId || sourcePageId === targetPageId) {
+            return;
+        }
+
+        setPdfPages((current) => {
+            const sourceIndex = current.findIndex((page) => page.id === sourcePageId);
+            const targetIndex = current.findIndex((page) => page.id === targetPageId);
+            if (sourceIndex === -1 || targetIndex === -1) {
+                return current;
+            }
+            const next = current.slice();
+            const [moved] = next.splice(sourceIndex, 1);
+            next.splice(targetIndex, 0, moved);
+            return next;
+        });
+    }
+
+    async function handleMergePdfs() {
+        if (!pdfPages.length) {
+            return;
+        }
+
+        setPdfIsMerging(true);
+        setPdfMergeStatus({ tone: '', text: 'Łączenie plików...' });
+
+        try {
+            const { mergePdfPages } = await loadPdfMergerModule();
+            const filesById = new Map(pdfFiles.map((entry) => [entry.id, entry.file]));
+            const entries = pdfPages.map((page) => ({ file: filesById.get(page.fileId), pageIndex: page.pageIndex }));
+            const blob = await mergePdfPages(entries);
+            setMergedPdfBlob(blob);
+            setPdfSaveStatus(null);
+            setPdfMergeStatus({ tone: 'ok', text: 'Gotowe! Oznacz poniżej czym jest ten dokument, żeby go pobrać lub zapisać.' });
+        } catch (error) {
+            setPdfMergeStatus({ tone: 'err', text: `Błąd: ${error.message}` });
+        } finally {
+            setPdfIsMerging(false);
+        }
+    }
+
+    function getPdfSaveTargetField(saveType) {
+        return saveType === 'umowa' ? 'contractFilePath' : 'acceptanceProtocolFilePath';
+    }
+
+    function getPdfSaveTargetFolder(saveType) {
+        return saveType === 'umowa' ? 'umowa' : 'protokol';
+    }
+
+    async function performPdfSaveToClient(clientId, fieldKey, docFolder, previousPath) {
+        if (!supabase || !mergedPdfBlob) {
+            return;
+        }
+
+        setPdfIsSaving(true);
+        setPdfSaveStatus({ tone: '', text: 'Zapisywanie...' });
+
+        try {
+            if (previousPath) {
+                const archivePath = `${clientId}/${docFolder}/archiwum/${Date.now()}-${previousPath.split('/').pop()}`;
+                const { error: moveError } = await supabase.storage.from('contracts').move(previousPath, archivePath);
+                if (moveError) {
+                    setPdfSaveStatus({ tone: 'err', text: 'Nie udało się zarchiwizować poprzedniego pliku.' });
+                    return;
+                }
+            }
+
+            const filename = `${docFolder}-${Date.now()}.pdf`;
+            const path = `${clientId}/${docFolder}/${filename}`;
+            const file = new File([mergedPdfBlob], filename, { type: 'application/pdf' });
+            const { error: uploadError } = await supabase.storage.from('contracts').upload(path, file, { upsert: true });
+
+            if (uploadError) {
+                setPdfSaveStatus({ tone: 'err', text: 'Nie udało się zapisać pliku.' });
+                return;
+            }
+
+            persistBillingClientPatch(clientId, { [fieldKey]: path });
+            setPdfSaveStatus({ tone: 'ok', text: 'Zapisano i przypisano do klubu w Clients.' });
+        } finally {
+            setPdfIsSaving(false);
+        }
+    }
+
+    function handleSavePdfToClient() {
+        if (!mergedPdfBlob) {
+            return;
+        }
+
+        if (pdfSaveType === 'oferta') {
+            const name = pdfSaveOfferName.trim();
+            if (!name) {
+                return;
+            }
+            loadPdfMergerModule().then(({ downloadBlob }) => downloadBlob(mergedPdfBlob, `oferta_${slugify(name)}.pdf`));
+            setPdfSaveStatus({ tone: 'ok', text: 'Pobrano jako oferta.' });
+            return;
+        }
+
+        const client = billingClients.find((entry) => entry.id === pdfSaveClientId);
+        if (!client) {
+            return;
+        }
+
+        const fieldKey = getPdfSaveTargetField(pdfSaveType);
+        const docFolder = getPdfSaveTargetFolder(pdfSaveType);
+        const existingPath = client[fieldKey];
+
+        if (existingPath) {
+            setPdfSaveConflict({
+                clientId: client.id,
+                clubName: client.clubName,
+                fieldKey,
+                docFolder,
+                existingPath,
+                label: pdfSaveType === 'umowa' ? 'umowę' : 'protokół',
+            });
+            return;
+        }
+
+        performPdfSaveToClient(client.id, fieldKey, docFolder, null);
+    }
+
+    function renderPdfSaveConflictModal() {
+        if (!pdfSaveConflict) {
+            return null;
+        }
+
+        return (
+            <div className="import-modal-backdrop" onClick={() => setPdfSaveConflict(null)}>
+                <div className="import-modal confirm-modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="step">Dokument już istnieje</div>
+                    <h2>{pdfSaveConflict.clubName || 'Ten klub'} ma już {pdfSaveConflict.label}</h2>
+                    <p className="subtle">Zarchiwizować obecny plik i zapisać nowy w jego miejsce?</p>
+                    <div className="meeting-item-actions">
+                        <button
+                            type="button"
+                            className="primary-action"
+                            disabled={pdfIsSaving}
+                            onClick={async () => {
+                                const { clientId, fieldKey, docFolder, existingPath } = pdfSaveConflict;
+                                setPdfSaveConflict(null);
+                                await performPdfSaveToClient(clientId, fieldKey, docFolder, existingPath);
+                            }}
+                        >
+                            Potwierdź
+                        </button>
+                        <button type="button" className="secondary" onClick={() => setPdfSaveConflict(null)}>
+                            Anuluj
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    async function handleCompressPdf() {
+        if (!pdfCompressFile) {
+            return;
+        }
+
+        setPdfIsCompressing(true);
+        setPdfCompressStatus({ tone: '', text: 'Kompresowanie...' });
+
+        try {
+            const { compressPdf, downloadBlob, formatBytes } = await loadPdfMergerModule();
+            const { blob, originalSize, compressedSize } = await compressPdf(pdfCompressFile);
+            downloadBlob(blob, 'skompresowany.pdf');
+            const pct = originalSize ? Math.round((1 - compressedSize / originalSize) * 100) : 0;
+            setPdfCompressStatus({ tone: 'ok', text: `Gotowe! ${formatBytes(originalSize)} → ${formatBytes(compressedSize)} (oszczędność ${pct}%)` });
+        } catch (error) {
+            setPdfCompressStatus({ tone: 'err', text: `Błąd: ${error.message}` });
+        } finally {
+            setPdfIsCompressing(false);
+        }
+    }
+
+    function renderPdfMergerPanel() {
+        return (
+            <section className="clients-layout">
+                <div className="card">
+                    <div className="step">PDF</div>
+                    <h1>Scal pliki PDF</h1>
+                    <p className="subtle">Wybierz pliki PDF, ułóż kolejność stron przeciągając, połącz w jeden dokument, a potem oznacz poniżej czym jest, żeby go pobrać lub zapisać na karcie klienta.</p>
+
+                    <label className="pdf-dropzone" htmlFor="pdf-merger-input">
+                        <span>Kliknij tutaj lub wybierz pliki PDF (możesz wybrać wiele naraz)</span>
+                        <input
+                            id="pdf-merger-input"
+                            type="file"
+                            accept="application/pdf"
+                            multiple
+                            onChange={(event) => {
+                                handlePdfFilesSelected(event.target.files);
+                                event.target.value = '';
+                            }}
+                        />
+                    </label>
+
+                    {pdfFiles.length ? (
+                        <div className="pdf-file-tags">
+                            {pdfFiles.map((entry) => (
+                                <div key={entry.id} className="file-tag">
+                                    <span>📄 {entry.name}</span>
+                                    <button type="button" className="remove-x" aria-label={`Usuń plik ${entry.name}`} onClick={() => removePdfFile(entry.id)}>✕</button>
+                                </div>
+                            ))}
+                        </div>
+                    ) : null}
+
+                    {pdfIsLoadingFiles ? <p className="subtle">Renderowanie miniatur stron...</p> : null}
+                    {pdfLoadStatus ? <p className={`pdf-status ${pdfLoadStatus.tone}`}>{pdfLoadStatus.text}</p> : null}
+                </div>
+
+                <div className="card">
+                    <div className="step">Kolejność stron</div>
+                    <h2>Ułóż strony (przeciągnij, aby zmienić kolejność)</h2>
+                    {pdfPages.length ? (
+                        <div className="pdf-pages-grid">
+                            {pdfPages.map((page, index) => (
+                                <article
+                                    key={page.id}
+                                    className={`pdf-page-card ${dragOverPdfPageId === page.id ? 'is-drag-over' : ''}`}
+                                    draggable
+                                    onDragStart={(event) => handlePdfPageDragStart(event, page.id)}
+                                    onDragEnd={handlePdfPageDragEnd}
+                                    onDragOver={(event) => handlePdfPageDragOver(event, page.id)}
+                                    onDrop={(event) => handlePdfPageDrop(event, page.id)}
+                                >
+                                    <span className="pdf-page-badge">{index + 1}</span>
+                                    <button type="button" className="remove-x pdf-page-remove" aria-label="Usuń tę stronę" onClick={() => removePdfPage(page.id)}>✕</button>
+                                    <img src={page.thumbUrl} alt={`Strona ${page.pageLabel} z ${page.fileName}`} />
+                                    <div className="pdf-page-label" title={page.fileName}>{page.fileName} · str. {page.pageLabel}</div>
+                                </article>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="subtle">Strony pojawią się tutaj po wczytaniu plików.</p>
+                    )}
+                </div>
+
+                <div className="card">
+                    <div className="step">Połącz i pobierz</div>
+                    <h2>Gotowe? Scal wszystko w jeden plik</h2>
+                    <div className="meeting-scheduler-actions">
+                        <button type="button" className="primary-action" disabled={!pdfPages.length || pdfIsMerging} onClick={handleMergePdfs}>
+                            {pdfIsMerging ? 'Łączenie...' : 'Połącz PDF-y'}
+                        </button>
+                    </div>
+                    {pdfMergeStatus ? <p className={`pdf-status ${pdfMergeStatus.tone}`}>{pdfMergeStatus.text}</p> : null}
+                </div>
+
+                {mergedPdfBlob ? (
+                    <div className="card">
+                        <div className="step">Oznacz dokument</div>
+                        <h2>Co to za dokument?</h2>
+                        <p className="subtle">Zmergowany plik możesz pobrać jako ofertę pod nazwą klubu, albo zapisać jako umowę/protokół bezpośrednio na karcie klienta w Clients.</p>
+
+                        <div className="meeting-scheduler-actions add-billing-client-mode">
+                            <button type="button" className={pdfSaveType === 'oferta' ? 'primary-action' : 'secondary'} onClick={() => setPdfSaveType('oferta')}>
+                                Oferta
+                            </button>
+                            <button type="button" className={pdfSaveType === 'umowa' ? 'primary-action' : 'secondary'} onClick={() => setPdfSaveType('umowa')}>
+                                Umowa z klubem
+                            </button>
+                            <button type="button" className={pdfSaveType === 'protokol' ? 'primary-action' : 'secondary'} onClick={() => setPdfSaveType('protokol')}>
+                                Protokół odbioru
+                            </button>
+                        </div>
+
+                        {pdfSaveType === 'oferta' ? (
+                            <div className="field-group">
+                                <label htmlFor="pdf-save-offer-name">Nazwa klubu</label>
+                                <input
+                                    id="pdf-save-offer-name"
+                                    type="text"
+                                    value={pdfSaveOfferName}
+                                    onChange={(event) => setPdfSaveOfferName(event.target.value)}
+                                    placeholder="np. Padel Klub Warszawa"
+                                />
+                            </div>
+                        ) : (
+                            <div className="field-group">
+                                <label htmlFor="pdf-save-client">Klub (z zakładki Clients)</label>
+                                <select
+                                    id="pdf-save-client"
+                                    value={pdfSaveClientId}
+                                    onChange={(event) => setPdfSaveClientId(event.target.value)}
+                                >
+                                    <option value="">Wybierz klub...</option>
+                                    {billingClients.map((client) => (
+                                        <option key={client.id} value={client.id}>{client.clubName || 'Bez nazwy'}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        <div className="meeting-scheduler-actions">
+                            <button
+                                type="button"
+                                className="primary-action"
+                                disabled={pdfIsSaving || (pdfSaveType === 'oferta' ? !pdfSaveOfferName.trim() : !pdfSaveClientId)}
+                                onClick={handleSavePdfToClient}
+                            >
+                                {pdfSaveType === 'oferta' ? 'Pobierz jako oferta' : (pdfIsSaving ? 'Zapisywanie...' : 'Zapisz')}
+                            </button>
+                        </div>
+                        {pdfSaveStatus ? <p className={`pdf-status ${pdfSaveStatus.tone}`}>{pdfSaveStatus.text}</p> : null}
+                    </div>
+                ) : null}
+
+                <div className="card">
+                    <div className="step">Dodatkowo</div>
+                    <h2>Skompresuj pojedynczy PDF</h2>
+                    <div className="pdf-compress-row">
+                        <label className="file-label">
+                            {pdfCompressFile ? pdfCompressFile.name : 'Wybierz plik PDF'}
+                            <input type="file" accept="application/pdf" onChange={(event) => setPdfCompressFile(event.target.files?.[0] || null)} />
+                        </label>
+                        <button type="button" className="secondary" disabled={!pdfCompressFile || pdfIsCompressing} onClick={handleCompressPdf}>
+                            {pdfIsCompressing ? 'Kompresowanie...' : 'Skompresuj i pobierz'}
+                        </button>
+                    </div>
+                    {pdfCompressStatus ? <p className={`pdf-status ${pdfCompressStatus.tone}`}>{pdfCompressStatus.text}</p> : null}
+                </div>
+
+                {renderPdfSaveConflictModal()}
+            </section>
+        );
     }
 
     function exportCsvToFile() {
@@ -3853,22 +4275,21 @@ export default function App() {
                     {isMobileNavOpen ? <IconX /> : <IconMenu />}
                 </button>
                 <div className={isMobileNavOpen ? 'header-actions is-open' : 'header-actions'}>
-                    {canAccessBilling || userProfile?.is_admin ? (
-                        <>
-                            <button type="button" className={activePanel === 'board' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('board'); setIsMobileNavOpen(false); }}>
-                                Sales
-                            </button>
-                            {canAccessBilling ? (
-                                <button type="button" className={activePanel === 'clients' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('clients'); setIsMobileNavOpen(false); }}>
-                                    Clients
-                                </button>
-                            ) : null}
-                            {userProfile?.is_admin ? (
-                                <button type="button" className={activePanel === 'admin' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('admin'); setIsMobileNavOpen(false); }}>
-                                    Admin
-                                </button>
-                            ) : null}
-                        </>
+                    <button type="button" className={activePanel === 'board' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('board'); setIsMobileNavOpen(false); }}>
+                        Sales
+                    </button>
+                    {canAccessBilling ? (
+                        <button type="button" className={activePanel === 'clients' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('clients'); setIsMobileNavOpen(false); }}>
+                            Clients
+                        </button>
+                    ) : null}
+                    <button type="button" className={activePanel === 'pdf' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('pdf'); setIsMobileNavOpen(false); }}>
+                        PDF
+                    </button>
+                    {userProfile?.is_admin ? (
+                        <button type="button" className={activePanel === 'admin' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('admin'); setIsMobileNavOpen(false); }}>
+                            Admin
+                        </button>
                     ) : null}
                     <span className="badge user-badge">{session.user.email}</span>
                     <button type="button" className="secondary" onClick={() => { setIsMobileNavOpen(false); handleLogout(); }}>
@@ -3877,7 +4298,7 @@ export default function App() {
                 </div>
             </header>
 
-            {activePanel === 'admin' ? renderAdminPanel() : activePanel === 'clients' ? renderClientsPanel() : (
+            {activePanel === 'admin' ? renderAdminPanel() : activePanel === 'clients' ? renderClientsPanel() : activePanel === 'pdf' ? renderPdfMergerPanel() : (
                 <main className={state.view === 'conversation' ? 'single-column' : 'list-layout'}>
                     {state.view === 'list' ? (
                         <section className="list-dashboard">
