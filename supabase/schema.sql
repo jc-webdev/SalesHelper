@@ -48,12 +48,18 @@ end $$;
 
 create table if not exists public.billing_clients (
     id uuid primary key default gen_random_uuid(),
-    club_id text not null unique references public.clubs(id) on delete cascade,
+    club_id text unique references public.clubs(id) on delete cascade,
     club_name text not null,
     payload jsonb not null default '{}'::jsonb,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
+
+-- Manually-added billing clients (not linked to a Sales club) need
+-- club_id to accept null; a unique constraint allows any number of
+-- nulls in Postgres, so this doesn't weaken the "one billing client per
+-- linked club" guarantee for the ones that are linked.
+alter table public.billing_clients alter column club_id drop not null;
 
 create table if not exists public.shared_memos (
     id uuid primary key default gen_random_uuid(),

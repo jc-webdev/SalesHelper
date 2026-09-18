@@ -33,7 +33,7 @@ export function mapBillingClientToRow(client) {
     const { id, clubId, clubName, ...rest } = client;
     return {
         id,
-        club_id: clubId,
+        club_id: clubId || null,
         club_name: clubName || '',
         payload: normalizeBillingClient(rest),
     };

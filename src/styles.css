@@ -2113,6 +2113,11 @@ button:disabled,
     margin-top: 14px;
 }
 
+.add-billing-client-mode {
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+}
+
 .meeting-timeline {
     margin-top: 14px;
 }

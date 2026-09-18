@@ -189,7 +189,9 @@ export default function App() {
     const [billingClients, setBillingClients] = useState([]);
     const [activeBillingClientId, setActiveBillingClientId] = useState(null);
     const [isAddBillingClientOpen, setIsAddBillingClientOpen] = useState(false);
+    const [addBillingClientMode, setAddBillingClientMode] = useState('existing');
     const [addBillingClientClubId, setAddBillingClientClubId] = useState('');
+    const [addBillingClientManualName, setAddBillingClientManualName] = useState('');
     const [isBillingClientEditing, setIsBillingClientEditing] = useState(false);
     const [billingClientDraft, setBillingClientDraft] = useState(null);
     const [contractUploadError, setContractUploadError] = useState('');
@@ -371,7 +373,9 @@ export default function App() {
             setBillingClients(loadedBillingClients);
 
             if (resolvedPanel === 'clients' && initialRouteState.selectedClubId) {
-                const routeBillingClient = loadedBillingClients.find((client) => client.clubId === initialRouteState.selectedClubId);
+                const routeBillingClient = loadedBillingClients.find((client) => (
+                    client.clubId === initialRouteState.selectedClubId || client.id === initialRouteState.selectedClubId
+                ));
                 if (routeBillingClient) {
                     setActiveBillingClientId(routeBillingClient.id);
                 }
@@ -647,7 +651,7 @@ export default function App() {
         const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
         const nextPath = buildLocationPathFromPanel(activePanel, {
             salesState: state,
-            clientsClubId: activeBillingClient?.clubId || null,
+            clientsClubId: activeBillingClient ? (activeBillingClient.clubId || activeBillingClient.id) : null,
         });
         const nextUrl = `${nextPath}${window.location.hash}`;
 
@@ -1954,41 +1958,93 @@ export default function App() {
         );
     }
 
+    function closeAddBillingClientModal() {
+        setIsAddBillingClientOpen(false);
+        setAddBillingClientMode('existing');
+        setAddBillingClientClubId('');
+        setAddBillingClientManualName('');
+    }
+
     function renderAddBillingClientModal() {
         return (
-            <div className="import-modal-backdrop" onClick={() => setIsAddBillingClientOpen(false)}>
+            <div className="import-modal-backdrop" onClick={closeAddBillingClientModal}>
                 <div className="import-modal club-modal" onClick={(event) => event.stopPropagation()}>
                     <div className="conversation-top">
                         <div>
                             <div className="step">Nowy klient rozliczeniowy</div>
-                            <h1>Wybierz klub</h1>
-                            <p className="subtle">Klient rozliczeniowy odpowiada istniejącemu klubowi z Sales.</p>
+                            <h1>Dodaj klienta</h1>
+                            <p className="subtle">Wybierz istniejący klub z Sales albo dodaj klienta ręcznie, bez łączenia go z klubem w Sales.</p>
                         </div>
-                        <button type="button" className="secondary" onClick={() => setIsAddBillingClientOpen(false)}>Anuluj</button>
+                        <button type="button" className="secondary" onClick={closeAddBillingClientModal}>Anuluj</button>
                     </div>
-                    <div className="field-group">
-                        <label htmlFor="billing-client-club">Klub</label>
-                        <select
-                            id="billing-client-club"
-                            value={addBillingClientClubId}
-                            onChange={(event) => setAddBillingClientClubId(event.target.value)}
-                        >
-                            <option value="">Wybierz klub...</option>
-                            {unlinkedClubsForBilling.map((club) => (
-                                <option key={club.id} value={club.id}>{club['Nazwa klubu']}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div className="meeting-scheduler-actions">
+
+                    <div className="meeting-scheduler-actions add-billing-client-mode">
                         <button
                             type="button"
-                            className="primary-action"
-                            disabled={!addBillingClientClubId}
-                            onClick={() => addBillingClient(addBillingClientClubId)}
+                            className={addBillingClientMode === 'existing' ? 'primary-action' : 'secondary'}
+                            onClick={() => setAddBillingClientMode('existing')}
                         >
-                            Dodaj klienta
+                            Z listy klubów Sales
+                        </button>
+                        <button
+                            type="button"
+                            className={addBillingClientMode === 'manual' ? 'primary-action' : 'secondary'}
+                            onClick={() => setAddBillingClientMode('manual')}
+                        >
+                            Dodaj ręcznie
                         </button>
                     </div>
+
+                    {addBillingClientMode === 'existing' ? (
+                        <>
+                            <div className="field-group">
+                                <label htmlFor="billing-client-club">Klub</label>
+                                <select
+                                    id="billing-client-club"
+                                    value={addBillingClientClubId}
+                                    onChange={(event) => setAddBillingClientClubId(event.target.value)}
+                                >
+                                    <option value="">Wybierz klub...</option>
+                                    {unlinkedClubsForBilling.map((club) => (
+                                        <option key={club.id} value={club.id}>{club['Nazwa klubu']}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="meeting-scheduler-actions">
+                                <button
+                                    type="button"
+                                    className="primary-action"
+                                    disabled={!addBillingClientClubId}
+                                    onClick={() => addBillingClient(addBillingClientClubId)}
+                                >
+                                    Dodaj klienta
+                                </button>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div className="field-group">
+                                <label htmlFor="billing-client-manual-name">Nazwa klubu / klienta</label>
+                                <input
+                                    id="billing-client-manual-name"
+                                    type="text"
+                                    value={addBillingClientManualName}
+                                    onChange={(event) => setAddBillingClientManualName(event.target.value)}
+                                    placeholder="np. Padel Klub Warszawa"
+                                />
+                            </div>
+                            <div className="meeting-scheduler-actions">
+                                <button
+                                    type="button"
+                                    className="primary-action"
+                                    disabled={!addBillingClientManualName.trim()}
+                                    onClick={() => addManualBillingClient(addBillingClientManualName)}
+                                >
+                                    Dodaj klienta
+                                </button>
+                            </div>
+                        </>
+                    )}
                 </div>
             </div>
         );
@@ -2283,16 +2339,11 @@ export default function App() {
         )));
     }
 
-    function addBillingClient(clubId) {
-        const club = state.clubs.find((candidate) => candidate.id === clubId);
-        if (!club) {
-            return;
-        }
-
+    function createBillingClient(clubId, clubName) {
         const newClient = {
             id: createBillingClientId(),
-            clubId: club.id,
-            clubName: club['Nazwa klubu'] || '',
+            clubId: clubId || null,
+            clubName: clubName || '',
             ...normalizeBillingClient({
                 cooperationStartedAt: new Date().toISOString().slice(0, 10),
                 invoiceDayOfMonth: 10,
@@ -2302,7 +2353,26 @@ export default function App() {
         setBillingClients((current) => [...current, newClient]);
         setIsAddBillingClientOpen(false);
         setAddBillingClientClubId('');
+        setAddBillingClientManualName('');
         setActiveBillingClientId(newClient.id);
+    }
+
+    function addBillingClient(clubId) {
+        const club = state.clubs.find((candidate) => candidate.id === clubId);
+        if (!club) {
+            return;
+        }
+
+        createBillingClient(club.id, club['Nazwa klubu'] || '');
+    }
+
+    function addManualBillingClient(clubName) {
+        const trimmed = String(clubName || '').trim();
+        if (!trimmed) {
+            return;
+        }
+
+        createBillingClient(null, trimmed);
     }
 
     function openBillingClientDetails(clientId) {
