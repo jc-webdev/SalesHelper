@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import logoOqla from './assets/logo-oqla.png';
+import iconOqla from './assets/icon-oqla.png';
 import { isSupabaseConfigured, supabase } from './supabaseClient';
 import {
     SUPABASE_TABLE,
@@ -50,6 +51,15 @@ function loadPdfMergerModule() {
         pdfMergerModulePromise = import('./lib/pdfMerger');
     }
     return pdfMergerModulePromise;
+}
+
+// qr-code-styling + jszip, same reasoning: only the QR tab needs them.
+let qrGeneratorModulePromise = null;
+function loadQrGeneratorModule() {
+    if (!qrGeneratorModulePromise) {
+        qrGeneratorModulePromise = import('./lib/qrGenerator');
+    }
+    return qrGeneratorModulePromise;
 }
 
 const iconStrokeProps = {
@@ -227,6 +237,12 @@ export default function App() {
     const [pdfSaveStatus, setPdfSaveStatus] = useState(null);
     const [pdfIsSaving, setPdfIsSaving] = useState(false);
     const [pdfSaveConflict, setPdfSaveConflict] = useState(null);
+    const [qrRawText, setQrRawText] = useState('');
+    const [qrRows, setQrRows] = useState([]);
+    const [qrParseError, setQrParseError] = useState('');
+    const [qrZipStatus, setQrZipStatus] = useState(null);
+    const [qrIsZipping, setQrIsZipping] = useState(false);
+    const qrInstancesRef = useRef(new Map());
     const meetingsCarouselRef = useRef(null);
     const lastSavedClubsRef = useRef(new Map());
     const lastSavedBillingClientsRef = useRef(new Map());
@@ -2991,6 +3007,147 @@ export default function App() {
         );
     }
 
+    useEffect(() => {
+        if (!qrRows.length) {
+            return undefined;
+        }
+
+        let cancelled = false;
+
+        loadQrGeneratorModule().then(({ createQrCodeInstance, buildCourtUrl }) => {
+            if (cancelled) {
+                return;
+            }
+
+            qrRows.forEach((row) => {
+                const container = document.getElementById(`qr-preview-${row.uid}`);
+                if (!container || qrInstancesRef.current.has(row.uid)) {
+                    return;
+                }
+
+                const instance = createQrCodeInstance(buildCourtUrl(row.id), { size: 1000, logoUrl: iconOqla });
+                instance.append(container);
+                qrInstancesRef.current.set(row.uid, instance);
+            });
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [qrRows]);
+
+    async function handleParseQrRows() {
+        setQrParseError('');
+        setQrZipStatus(null);
+
+        const { parseUidIdRows } = await loadQrGeneratorModule();
+        const rows = parseUidIdRows(qrRawText);
+
+        if (!rows.length) {
+            setQrParseError('Nie znaleziono żadnych wierszy. Wklej dane w formacie "uid [tab] id", po jednym wierszu na parę.');
+            setQrRows([]);
+            return;
+        }
+
+        qrInstancesRef.current.clear();
+        setQrRows(rows);
+    }
+
+    async function handleDownloadSingleQr(row) {
+        const { getQrPngBlob, downloadBlob } = await loadQrGeneratorModule();
+        const instance = qrInstancesRef.current.get(row.uid);
+        if (!instance) {
+            return;
+        }
+
+        const blob = await getQrPngBlob(instance);
+        downloadBlob(blob, `${row.uid}.png`);
+    }
+
+    async function handleDownloadAllQrZip() {
+        if (!qrRows.length) {
+            return;
+        }
+
+        setQrIsZipping(true);
+        setQrZipStatus({ tone: '', text: 'Generowanie plików...' });
+
+        try {
+            const { buildQrZip, downloadBlob } = await loadQrGeneratorModule();
+            const blob = await buildQrZip(qrRows, iconOqla, (done, total) => {
+                setQrZipStatus({ tone: '', text: `Generowanie ${done}/${total}...` });
+            });
+            downloadBlob(blob, 'kody-qr.zip');
+            setQrZipStatus({ tone: 'ok', text: `Gotowe! Pobrano ${qrRows.length} kod(ów) w pliku kody-qr.zip` });
+        } catch (error) {
+            setQrZipStatus({ tone: 'err', text: `Błąd: ${error.message}` });
+        } finally {
+            setQrIsZipping(false);
+        }
+    }
+
+    function renderQrGeneratorPanel() {
+        return (
+            <section className="clients-layout">
+                <div className="card">
+                    <div className="step">QR</div>
+                    <h1>Generator kodów QR dla kortów</h1>
+                    <p className="subtle">
+                        Wklej listę par UID i ID (np. skopiowaną z arkusza, kolumny rozdzielone tabulatorem) — każdy wiersz to jeden kort.
+                        Kod QR prowadzi pod adres https://app.oqla.pl/court/[id]/request, a plik PNG nazywa się jak UID (np. 26.png).
+                    </p>
+                    <div className="field-group">
+                        <label htmlFor="qr-raw-input">Lista UID / ID</label>
+                        <textarea
+                            id="qr-raw-input"
+                            rows={8}
+                            value={qrRawText}
+                            onChange={(event) => setQrRawText(event.target.value)}
+                            placeholder={'uid\tid\n26\td2dfe9ea-be79-4b65-b92d-feba4fe9a9a7'}
+                        />
+                    </div>
+                    <div className="meeting-scheduler-actions">
+                        <button type="button" className="primary-action" onClick={handleParseQrRows}>
+                            Wczytaj listę
+                        </button>
+                    </div>
+                    {qrParseError ? <p className="error-message">{qrParseError}</p> : null}
+                    {qrRows.length ? <p className="subtle">Wczytano {qrRows.length} wierszy.</p> : null}
+                </div>
+
+                {qrRows.length ? (
+                    <div className="card">
+                        <div className="admin-topbar">
+                            <div>
+                                <div className="step">Podgląd</div>
+                                <h2>Wygenerowane kody</h2>
+                            </div>
+                            <button type="button" className="primary-action" disabled={qrIsZipping} onClick={handleDownloadAllQrZip}>
+                                {qrIsZipping ? 'Generowanie...' : `Pobierz wszystkie (ZIP, ${qrRows.length})`}
+                            </button>
+                        </div>
+                        {qrZipStatus ? <p className={`pdf-status ${qrZipStatus.tone}`}>{qrZipStatus.text}</p> : null}
+
+                        <div className="qr-grid">
+                            {qrRows.map((row) => (
+                                <article key={row.uid} className="qr-card">
+                                    <div id={`qr-preview-${row.uid}`} className="qr-preview" />
+                                    <div className="qr-card-label">
+                                        <strong>{row.uid}.png</strong>
+                                        <span title={row.id}>{row.id}</span>
+                                    </div>
+                                    <button type="button" className="secondary" onClick={() => handleDownloadSingleQr(row)}>
+                                        Pobierz PNG
+                                    </button>
+                                </article>
+                            ))}
+                        </div>
+                    </div>
+                ) : null}
+            </section>
+        );
+    }
+
     function exportCsvToFile() {
         const csvContent = buildExportCsv(state.clubs);
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -4344,6 +4501,9 @@ export default function App() {
                     <button type="button" className={activePanel === 'pdf' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('pdf'); setIsMobileNavOpen(false); }}>
                         PDF
                     </button>
+                    <button type="button" className={activePanel === 'qr' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('qr'); setIsMobileNavOpen(false); }}>
+                        QR
+                    </button>
                     {userProfile?.is_admin ? (
                         <button type="button" className={activePanel === 'admin' ? 'secondary active-nav' : 'secondary'} onClick={() => { setActivePanel('admin'); setIsMobileNavOpen(false); }}>
                             Admin
@@ -4356,7 +4516,7 @@ export default function App() {
                 </div>
             </header>
 
-            {activePanel === 'admin' ? renderAdminPanel() : activePanel === 'clients' ? renderClientsPanel() : activePanel === 'pdf' ? renderPdfMergerPanel() : (
+            {activePanel === 'admin' ? renderAdminPanel() : activePanel === 'clients' ? renderClientsPanel() : activePanel === 'pdf' ? renderPdfMergerPanel() : activePanel === 'qr' ? renderQrGeneratorPanel() : (
                 <main className={state.view === 'conversation' ? 'single-column' : 'list-layout'}>
                     {state.view === 'list' ? (
                         <section className="list-dashboard">

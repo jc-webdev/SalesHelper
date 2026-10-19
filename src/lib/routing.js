@@ -2,6 +2,7 @@ const PANEL_SEGMENTS = {
     board: 'sales',
     clients: 'clients',
     pdf: 'pdf',
+    qr: 'qr',
     admin: 'admin',
 };
 
@@ -16,6 +17,9 @@ function getPanelFromPathname(pathname) {
     }
     if (segment === 'pdf') {
         return 'pdf';
+    }
+    if (segment === 'qr') {
+        return 'qr';
     }
     if (segment === 'admin') {
         return 'admin';
