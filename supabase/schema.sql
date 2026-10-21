@@ -61,6 +61,18 @@ create table if not exists public.billing_clients (
 -- linked club" guarantee for the ones that are linked.
 alter table public.billing_clients alter column club_id drop not null;
 
+-- User-created kanban columns in Sales, on top of the fixed built-in ones.
+-- `title` doubles as the club `call_status` value clubs in this column get
+-- set to. `position` is a float so a new column can always slot in between
+-- two existing ones (fixed or custom) via a single insert, never requiring
+-- the other rows' positions to be renumbered.
+create table if not exists public.board_columns (
+    id uuid primary key default gen_random_uuid(),
+    title text not null unique,
+    position double precision not null,
+    created_at timestamptz not null default now()
+);
+
 create table if not exists public.shared_memos (
     id uuid primary key default gen_random_uuid(),
     author_id uuid not null references auth.users(id) on delete cascade,
@@ -202,6 +214,7 @@ alter table public.profiles enable row level security;
 alter table public.shared_memos enable row level security;
 alter table public.camera_inventory enable row level security;
 alter table public.billing_clients enable row level security;
+alter table public.board_columns enable row level security;
 
 drop policy if exists "Allow authenticated read clubs" on public.clubs;
 create policy "Allow authenticated read clubs"
@@ -313,6 +326,27 @@ for delete
 to authenticated
 using (public.is_billing_staff(auth.uid()));
 
+drop policy if exists "Allow authenticated read board columns" on public.board_columns;
+create policy "Allow authenticated read board columns"
+on public.board_columns
+for select
+to authenticated
+using (auth.uid() is not null);
+
+drop policy if exists "Allow authenticated insert board columns" on public.board_columns;
+create policy "Allow authenticated insert board columns"
+on public.board_columns
+for insert
+to authenticated
+with check (auth.uid() is not null);
+
+drop policy if exists "Allow admin delete board columns" on public.board_columns;
+create policy "Allow admin delete board columns"
+on public.board_columns
+for delete
+to authenticated
+using (public.is_admin_user(auth.uid()));
+
 insert into storage.buckets (id, name, public)
 values ('contracts', 'contracts', false)
 on conflict (id) do nothing;
@@ -371,6 +405,13 @@ begin
         where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'billing_clients'
     ) then
         alter publication supabase_realtime add table public.billing_clients;
+    end if;
+
+    if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'board_columns'
+    ) then
+        alter publication supabase_realtime add table public.board_columns;
     end if;
 
     if not exists (

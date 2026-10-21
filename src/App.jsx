@@ -15,7 +15,6 @@ import {
     API_BASE_URL,
     STATUS_OPTIONS,
     CSV_STATUS_OPTIONS,
-    COLUMN_DEFINITIONS,
     editableFieldConfigs,
     initialState,
 } from './lib/constants';
@@ -41,6 +40,7 @@ import { normalizeText, getContactFirstName, slugify } from './lib/format';
 import { createNoteId } from './lib/notes';
 import { createMeetingId, localDateTimeToIso, isoToLocalDateTimeParts } from './lib/meetings';
 import { createBillingClientId, normalizeBillingClient, mapBillingClientToRow, mapRowToBillingClient, buildInvoiceMonths, getContractMonthProgress } from './lib/billing';
+import { createBoardColumnId, mapBoardColumnToRow, mapRowToBoardColumn, computeInsertPosition, buildMergedColumnDefinitions } from './lib/boardColumns';
 
 // pdf-lib + pdfjs-dist are large (over 1MB combined) and only needed on the
 // PDF tab, so they're code-split via dynamic import instead of loading them
@@ -243,6 +243,12 @@ export default function App() {
     const [qrZipStatus, setQrZipStatus] = useState(null);
     const [qrIsZipping, setQrIsZipping] = useState(false);
     const qrInstancesRef = useRef(new Map());
+    const [boardCustomColumns, setBoardCustomColumns] = useState([]);
+    const [isAddColumnModalOpen, setIsAddColumnModalOpen] = useState(false);
+    const [newColumnTitle, setNewColumnTitle] = useState('');
+    const [newColumnInsertBeforeId, setNewColumnInsertBeforeId] = useState('');
+    const [newColumnError, setNewColumnError] = useState('');
+    const [deleteColumnPrompt, setDeleteColumnPrompt] = useState(null);
     const meetingsCarouselRef = useRef(null);
     const lastSavedClubsRef = useRef(new Map());
     const lastSavedBillingClientsRef = useRef(new Map());
@@ -323,6 +329,7 @@ export default function App() {
                 setIsMemoComposerOpen(false);
                 setMemoDraft('');
                 setBillingClients([]);
+                setBoardCustomColumns([]);
                 lastSavedBillingClientsRef.current = new Map();
                 lastSavedClubsRef.current = new Map();
                 setCameraInventory({ available: 0, ordered: 0, toInstall: 0 });
@@ -347,14 +354,16 @@ export default function App() {
             let cameraInventoryRow;
             let roster;
             let billingClientRows;
+            let boardColumnRows;
 
             try {
-                ([{ data: profile, error: profileError }, { data: clubs, error: clubsError }, { data: cameraInventoryRow }, { data: roster }, { data: billingClientRows }] = await Promise.all([
+                ([{ data: profile, error: profileError }, { data: clubs, error: clubsError }, { data: cameraInventoryRow }, { data: roster }, { data: billingClientRows }, { data: boardColumnRows }] = await Promise.all([
                     supabase.from('profiles').select('*').eq('id', session.user.id).single(),
                     supabase.from(SUPABASE_TABLE).select('*').order('updated_at', { ascending: false }),
                     supabase.from('camera_inventory').select('*').eq('id', 'singleton').single(),
                     supabase.from('profiles').select('id, email, full_name').order('full_name', { ascending: true }),
                     supabase.from('billing_clients').select('*').order('club_name', { ascending: true }),
+                    supabase.from('board_columns').select('*').order('position', { ascending: true }),
                 ]));
             } catch (networkError) {
                 // A dropped connection (e.g. right after switching apps to
@@ -418,6 +427,7 @@ export default function App() {
             const loadedBillingClients = (billingClientRows || []).map(mapRowToBillingClient);
             lastSavedBillingClientsRef.current = new Map(loadedBillingClients.map((client) => [client.id, JSON.stringify(client)]));
             setBillingClients(loadedBillingClients);
+            setBoardCustomColumns((boardColumnRows || []).map(mapRowToBoardColumn));
 
             if (resolvedPanel === 'clients' && initialRouteState.selectedClubId) {
                 const routeBillingClient = loadedBillingClients.find((client) => (
@@ -627,6 +637,24 @@ export default function App() {
                         : [...current, incoming];
                 });
             })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'board_columns' }, (payload) => {
+                if (payload.eventType === 'DELETE') {
+                    const deletedId = payload.old?.id;
+                    if (!deletedId) {
+                        return;
+                    }
+                    setBoardCustomColumns((current) => current.filter((column) => column.id !== deletedId));
+                    return;
+                }
+
+                const incoming = mapRowToBoardColumn(payload.new);
+                setBoardCustomColumns((current) => {
+                    const exists = current.some((column) => column.id === incoming.id);
+                    return exists
+                        ? current.map((column) => (column.id === incoming.id ? incoming : column))
+                        : [...current, incoming];
+                });
+            })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'shared_memos' }, () => {
                 refreshSharedMemos();
             })
@@ -723,8 +751,14 @@ export default function App() {
         return { total, pending, plannedToday, callback, offerRequest, offer, meetings, suspended, won, lost, notes };
     }, [state.clubs]);
 
+    const mergedColumnDefinitions = useMemo(() => buildMergedColumnDefinitions(boardCustomColumns), [boardCustomColumns]);
+
+    const allStatusOptions = useMemo(() => (
+        [...STATUS_OPTIONS, ...boardCustomColumns.map((column) => column.title)]
+    ), [boardCustomColumns]);
+
     const boardColumns = useMemo(() => {
-        const columns = COLUMN_DEFINITIONS.map((column) => ({
+        const columns = mergedColumnDefinitions.map((column) => ({
             ...column,
             clubs: [],
         }));
@@ -736,7 +770,7 @@ export default function App() {
         });
 
         return columns;
-    }, [state.clubs]);
+    }, [mergedColumnDefinitions, state.clubs]);
 
     const filteredClubs = useMemo(() => {
         const query = normalizeText(clubSearchQuery);
@@ -774,7 +808,7 @@ export default function App() {
     }, [assigneeFilter, clubSearchQuery, session?.user?.id, state.clubs]);
 
     const visibleBoardColumns = useMemo(() => {
-        const columns = COLUMN_DEFINITIONS.map((column) => ({
+        const columns = mergedColumnDefinitions.map((column) => ({
             ...column,
             clubs: [],
         }));
@@ -786,7 +820,7 @@ export default function App() {
         });
 
         return columns;
-    }, [filteredClubs]);
+    }, [filteredClubs, mergedColumnDefinitions]);
 
     const upcomingMeetings = useMemo(() => {
         const now = Date.now();
@@ -1899,6 +1933,27 @@ export default function App() {
                                     </div>
                                 );
                             }) : <p className="subtle">Brak użytkowników do wyświetlenia.</p>}
+                        </div>
+                    </div>
+
+                    <div className="detail-box">
+                        <h3>Kolumny tablicy</h3>
+                        <p className="subtle">Własne kolumny dodane w Sales. Kolumn wbudowanych nie można usunąć.</p>
+                        <div className="team-list">
+                            {boardCustomColumns.length ? boardCustomColumns.map((column) => (
+                                <div key={column.id} className="team-member-row">
+                                    <div className="team-member-name">{column.title}</div>
+                                    <button
+                                        type="button"
+                                        className="icon-button danger"
+                                        aria-label={`Usuń kolumnę ${column.title}`}
+                                        title="Usuń kolumnę"
+                                        onClick={() => handleRequestDeleteBoardColumn(column)}
+                                    >
+                                        <IconTrash />
+                                    </button>
+                                </div>
+                            )) : <p className="subtle">Brak własnych kolumn.</p>}
                         </div>
                     </div>
                 </div>
@@ -3252,35 +3307,11 @@ export default function App() {
             return club?.plannedToday ? 'today' : 'pending';
         }
 
-        if (status === STATUS_CALLBACK) {
-            return 'callback';
-        }
+        const matchingColumn = mergedColumnDefinitions.find((column) => (
+            column.kind === 'status' && column.statuses?.includes(status)
+        ));
 
-        if (status === STATUS_OFFER_REQUEST) {
-            return 'offer-request';
-        }
-
-        if (status === STATUS_SENT_OFFER) {
-            return 'offer';
-        }
-
-        if (status === STATUS_MEETING) {
-            return 'meeting';
-        }
-
-        if (status === STATUS_SUSPENDED) {
-            return 'suspended';
-        }
-
-        if (status === STATUS_WON) {
-            return 'won';
-        }
-
-        if (status === STATUS_LOST) {
-            return 'lost';
-        }
-
-        return 'pending';
+        return matchingColumn?.id || 'pending';
     }
 
     function getColumnDropPatch(column) {
@@ -3296,6 +3327,167 @@ export default function App() {
             callStatus: column.statuses?.[0] || DEFAULT_STATUS,
             plannedToday: false,
         };
+    }
+
+    function openAddColumnModal() {
+        setNewColumnTitle('');
+        setNewColumnInsertBeforeId('');
+        setNewColumnError('');
+        setIsAddColumnModalOpen(true);
+    }
+
+    function closeAddColumnModal() {
+        setIsAddColumnModalOpen(false);
+        setNewColumnTitle('');
+        setNewColumnInsertBeforeId('');
+        setNewColumnError('');
+    }
+
+    async function handleCreateBoardColumn() {
+        const title = newColumnTitle.trim();
+        if (!title) {
+            setNewColumnError('Podaj nazwę kolumny.');
+            return;
+        }
+
+        const normalizedTitle = normalizeText(title);
+        const isDuplicate = mergedColumnDefinitions.some((column) => normalizeText(column.title) === normalizedTitle);
+        if (isDuplicate) {
+            setNewColumnError('Kolumna o tej nazwie już istnieje.');
+            return;
+        }
+
+        const orderedColumns = mergedColumnDefinitions.slice().sort((left, right) => left.position - right.position);
+        const position = computeInsertPosition(orderedColumns, newColumnInsertBeforeId || null);
+        const newColumn = { id: createBoardColumnId(), title, position };
+
+        if (supabase) {
+            const { error } = await supabase.from('board_columns').insert(mapBoardColumnToRow(newColumn));
+            if (error) {
+                setNewColumnError('Nie udało się zapisać kolumny.');
+                return;
+            }
+        }
+
+        setBoardCustomColumns((current) => [...current, newColumn]);
+        closeAddColumnModal();
+    }
+
+    async function performDeleteBoardColumn(columnId, clubsToMove, targetColumn) {
+        if (clubsToMove?.length && targetColumn) {
+            const patch = getColumnDropPatch(targetColumn);
+            clubsToMove.forEach((club) => persistPatch(club.id, patch));
+        }
+
+        setBoardCustomColumns((current) => current.filter((column) => column.id !== columnId));
+        setDeleteColumnPrompt(null);
+
+        if (supabase) {
+            await supabase.from('board_columns').delete().eq('id', columnId);
+        }
+    }
+
+    function handleRequestDeleteBoardColumn(column) {
+        const clubsInColumn = state.clubs.filter((club) => getClubWorkflowColumnId(club) === column.id);
+
+        if (!clubsInColumn.length) {
+            performDeleteBoardColumn(column.id, null, null);
+            return;
+        }
+
+        const fallbackTarget = mergedColumnDefinitions.find((candidate) => candidate.id !== column.id);
+        setDeleteColumnPrompt({
+            columnId: column.id,
+            title: column.title,
+            clubCount: clubsInColumn.length,
+            moveToColumnId: fallbackTarget?.id || 'pending',
+        });
+    }
+
+    function confirmDeleteBoardColumn() {
+        if (!deleteColumnPrompt) {
+            return;
+        }
+
+        const targetColumn = mergedColumnDefinitions.find((column) => column.id === deleteColumnPrompt.moveToColumnId);
+        const clubsToMove = state.clubs.filter((club) => getClubWorkflowColumnId(club) === deleteColumnPrompt.columnId);
+        performDeleteBoardColumn(deleteColumnPrompt.columnId, clubsToMove, targetColumn);
+    }
+
+    function renderAddColumnModal() {
+        return (
+            <div className="import-modal-backdrop" onClick={closeAddColumnModal}>
+                <div className="import-modal confirm-modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="step">Nowa kolumna tablicy</div>
+                    <h2>Dodaj kolumnę</h2>
+                    <div className="field-group">
+                        <label htmlFor="new-column-title">Nazwa kolumny</label>
+                        <input
+                            id="new-column-title"
+                            type="text"
+                            value={newColumnTitle}
+                            onChange={(event) => { setNewColumnTitle(event.target.value); setNewColumnError(''); }}
+                            placeholder="np. Negocjacje ceny"
+                        />
+                    </div>
+                    <div className="field-group">
+                        <label htmlFor="new-column-insert-before">Wstaw przed</label>
+                        <select
+                            id="new-column-insert-before"
+                            value={newColumnInsertBeforeId}
+                            onChange={(event) => setNewColumnInsertBeforeId(event.target.value)}
+                        >
+                            <option value="">Na końcu</option>
+                            {mergedColumnDefinitions.map((column) => (
+                                <option key={column.id} value={column.id}>{column.title}</option>
+                            ))}
+                        </select>
+                    </div>
+                    {newColumnError ? <p className="error-message">{newColumnError}</p> : null}
+                    <div className="meeting-item-actions">
+                        <button type="button" className="primary-action" onClick={handleCreateBoardColumn}>Dodaj kolumnę</button>
+                        <button type="button" className="secondary" onClick={closeAddColumnModal}>Anuluj</button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    function renderDeleteColumnPrompt() {
+        if (!deleteColumnPrompt) {
+            return null;
+        }
+
+        const otherColumns = mergedColumnDefinitions.filter((column) => column.id !== deleteColumnPrompt.columnId);
+
+        return (
+            <div className="import-modal-backdrop" onClick={() => setDeleteColumnPrompt(null)}>
+                <div className="import-modal confirm-modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="step">Usuwanie kolumny</div>
+                    <h2>Usunąć kolumnę „{deleteColumnPrompt.title}”?</h2>
+                    <p className="subtle">
+                        Jest w niej {deleteColumnPrompt.clubCount} {deleteColumnPrompt.clubCount === 1 ? 'klub' : 'klubów'}.
+                        Wybierz, dokąd je przenieść przed usunięciem kolumny.
+                    </p>
+                    <div className="field-group">
+                        <label htmlFor="delete-column-target">Przenieś kluby do</label>
+                        <select
+                            id="delete-column-target"
+                            value={deleteColumnPrompt.moveToColumnId}
+                            onChange={(event) => setDeleteColumnPrompt((current) => ({ ...current, moveToColumnId: event.target.value }))}
+                        >
+                            {otherColumns.map((column) => (
+                                <option key={column.id} value={column.id}>{column.title}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="meeting-item-actions">
+                        <button type="button" className="primary-action" onClick={confirmDeleteBoardColumn}>Potwierdź</button>
+                        <button type="button" className="secondary" onClick={() => setDeleteColumnPrompt(null)}>Anuluj</button>
+                    </div>
+                </div>
+            </div>
+        );
     }
 
     function updateClubWorkflowStatus(clubId, callStatus) {
@@ -4162,7 +4354,7 @@ export default function App() {
                                 value={club.callStatus || DEFAULT_STATUS}
                                 onChange={(event) => updateClubWorkflowStatus(club.id, event.target.value)}
                             >
-                                {STATUS_OPTIONS.map((statusOption) => (
+                                {allStatusOptions.map((statusOption) => (
                                     <option key={statusOption} value={statusOption}>
                                         {statusOption}
                                     </option>
@@ -4208,7 +4400,7 @@ export default function App() {
                                     value={club.callStatus || DEFAULT_STATUS}
                                     onChange={(event) => updateClubCallStatus(club.id, event.target.value)}
                                 >
-                                    {STATUS_OPTIONS.map((statusOption) => (
+                                    {allStatusOptions.map((statusOption) => (
                                         <option key={statusOption} value={statusOption}>
                                             {statusOption}
                                         </option>
@@ -4429,7 +4621,7 @@ export default function App() {
                                     value={currentClub.callStatus || DEFAULT_STATUS}
                                     onChange={(event) => changeConversationOutcome(event.target.value)}
                                 >
-                                    {STATUS_OPTIONS.map((statusOption) => (
+                                    {allStatusOptions.map((statusOption) => (
                                         <option key={statusOption} value={statusOption}>
                                             {statusOption}
                                         </option>
@@ -4772,9 +4964,14 @@ export default function App() {
                                        </div>
                                    </section>
                                ))}
+                               <button type="button" className="board-column add-column-tile" onClick={openAddColumnModal}>
+                                   <span>+ Dodaj kolumnę</span>
+                               </button>
                            </div>
                        </section>
                     ) : null}
+
+                    {isAddColumnModalOpen ? renderAddColumnModal() : null}
 
                     {isManualClubModalOpen ? renderManualClubModal() : null}
 
@@ -4870,6 +5067,8 @@ export default function App() {
                     {wonClubPromptClubId ? renderWonClubPrompt() : null}
                 </main>
             )}
+
+            {deleteColumnPrompt ? renderDeleteColumnPrompt() : null}
         </div>
     );
 }

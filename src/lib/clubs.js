@@ -39,7 +39,10 @@ export function normalizeCallStatus(callStatus) {
         case 'Rozmowa się odbyła - lost':
             return STATUS_LOST;
         default:
-            return DEFAULT_STATUS;
+            // Anything else is a user-created board column's status value
+            // (see src/lib/boardColumns.js) rather than garbage — pass it
+            // through unchanged instead of silently resetting it.
+            return status || DEFAULT_STATUS;
     }
 }
 

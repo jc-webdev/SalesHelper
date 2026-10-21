@@ -1226,6 +1226,26 @@ button:disabled,
     line-height: 1.25;
 }
 
+.add-column-tile {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 180px;
+    background: transparent;
+    border: 2px dashed var(--line);
+    color: var(--muted);
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
+.add-column-tile:hover {
+    border-color: var(--blue);
+    color: var(--blue);
+    background: var(--blue-soft);
+}
+
 .board-count {
     display: inline-flex;
     align-items: center;
